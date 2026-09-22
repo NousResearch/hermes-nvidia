@@ -2,15 +2,9 @@
 name: nvidia-broadcast
 description: Use when controlling NVIDIA Broadcast through MCP to apply effects, process local media, select devices, or change camera resolution, or when Broadcast is missing or too old to expose the gateway and the user wants it installed; not for Broadcast app settings outside the MCP gateway.
 metadata:
-  author: "NVIDIA Broadcast Team <RTXBroadcastFeedback@nvidia.com>"
-  version: "1.1.0"
-  tags:
-    - nvidia-broadcast
-    - mcp
-    - camera
-    - microphone
-    - audio-effects
-    - video-effects
+  author: NVIDIA Broadcast Team <RTXBroadcastFeedback@nvidia.com>
+  version: 1.1.0
+  tags: nvidia-broadcast, mcp, camera, microphone, audio-effects, video-effects
   domain: media
 ---
 

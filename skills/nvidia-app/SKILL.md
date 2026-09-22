@@ -1,18 +1,12 @@
 ---
 name: nvidia-app
-description: >
-  Use NVIDIA App's local MCP tools for application, driver, game-optimization,
-  laptop-feature, and restricted In-Game Overlay operations and troubleshooting.
+description: Use NVIDIA App's local MCP tools for application, driver, game-optimization, laptop-feature, and restricted In-Game Overlay operations and troubleshooting.
 metadata:
-  author: "Sahil Singh <sahils@nvidia.com>"
-  tags:
-    - nvidia-app
-    - mcp
-    - in-game-overlay
-    - recording
+  author: Sahil Singh <sahils@nvidia.com>
+  tags: nvidia-app, mcp, in-game-overlay, recording
   domain: system-tools
   team: nvidia-app
-  version: "1.1.4"
+  version: 1.1.4
 ---
 
 # NVIDIA App MCP Overlay
