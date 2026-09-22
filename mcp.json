@@ -1,5 +1,5 @@
 {
-  "mcpServers": {
+  "servers": {
     "nvidia-app": {
       "type": "streamable-http",
       "url": "http://127.0.0.1:47985/mcp"
