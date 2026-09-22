@@ -1,9 +1,26 @@
 # hermes-nvidia
 
-Hermes plugin carrying the NVIDIA App and NVIDIA Broadcast MCP servers and their skills. Portable Agent Plugin (agent-plugins.org 1.0.0): no code, two servers, two skills.
+This repo holds two Hermes plugins, one per NVIDIA application: `nvidia-app` and `nvidia-broadcast`. Each lives in its own subdirectory as a complete portable plugin (plugin.json, mcp.json, one skill) and is installed independently.
 
-Windows only. Each server's tools are offered while its application is installed at the required version; the Broadcast server exists only while the Broadcast UI is open in a desktop session.
+| Plugin | App and minimum version | Server |
+|---|---|---|
+| `nvidia-app` | NVIDIA App 11.0.0 | streamable-http on loopback; the runtime endpoint is published by the app in its McpServer `server.json` |
+| `nvidia-broadcast` | NVIDIA Broadcast 2.3.0 | streamable-http on loopback; the gateway binds the first free port from 18100 and records it in `%APPDATA%/nvidia-broadcast/gateway.json` |
 
-Hermes-specific gating lives under `extensions["com.nousresearch.hermes"]` in `plugin.json`; other Agent Plugins clients ignore it by spec. `mcp.json` is unmodified spec shape.
+Install from the repo subdirectories:
+
+```
+hermes plugins install NousResearch/hermes-nvidia/nvidia-app
+hermes plugins install NousResearch/hermes-nvidia/nvidia-broadcast
+```
+
+Desktop deep link form:
+
+```
+hermes://plugin/install?repo=NousResearch/hermes-nvidia/nvidia-app&enable=1
+hermes://plugin/install?repo=NousResearch/hermes-nvidia/nvidia-broadcast&enable=1
+```
+
+Windows only. The corresponding application must be installed at the minimum version or the install refuses; its tools appear while the application is running.
 
 Evidence from real hardware per core change: `EVIDENCE.md`.

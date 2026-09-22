@@ -1,0 +1,43 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "nvidia-broadcast",
+  "version": "0.1.0",
+  "description": "MCP server and skill for NVIDIA Broadcast on Windows; tools appear while the app is installed and running.",
+  "author": {
+    "name": "Nous Research"
+  },
+  "repository": "https://github.com/NousResearch/hermes-nvidia",
+  "license": "MIT",
+  "keywords": [
+    "nvidia",
+    "mcp",
+    "windows",
+    "broadcast",
+    "camera",
+    "microphone"
+  ],
+  "extensions": {
+    "com.nousresearch.hermes": {
+      "servers": {
+        "nvidia-broadcast": {
+          "app": {
+            "win32": {
+              "presence": "executable",
+              "location": "%ProgramFiles%/NVIDIA Corporation/NVIDIA Broadcast/NVIDIA Broadcast.exe",
+              "version": {
+                "kind": "pe_resource"
+              }
+            }
+          },
+          "requires": {
+            "app": true,
+            "min_version": "2.3.0"
+          },
+          "liveness": {
+            "kind": "interactive_session"
+          }
+        }
+      }
+    }
+  }
+}

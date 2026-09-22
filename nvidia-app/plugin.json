@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "hermes-nvidia",
+  "name": "nvidia-app",
   "version": "0.1.0",
-  "description": "NVIDIA App and NVIDIA Broadcast MCP servers and skills for Hermes. Windows only; each server's tools appear while its application is installed and running.",
+  "description": "MCP server and skill for NVIDIA App on Windows; tools appear while the app is installed and running.",
   "author": {
     "name": "Nous Research"
   },
@@ -10,10 +10,10 @@
   "license": "MIT",
   "keywords": [
     "nvidia",
-    "gpu",
-    "broadcast",
     "mcp",
-    "windows"
+    "windows",
+    "gpu",
+    "overlay"
   ],
   "extensions": {
     "com.nousresearch.hermes": {
@@ -36,24 +36,6 @@
           "liveness": {
             "kind": "server_json",
             "path": "%LOCALAPPDATA%/NVIDIA Corporation/NVIDIA App/McpServer/server.json"
-          }
-        },
-        "nvidia-broadcast": {
-          "app": {
-            "win32": {
-              "presence": "executable",
-              "location": "%ProgramFiles%/NVIDIA Corporation/NVIDIA Broadcast/NVIDIA Broadcast.exe",
-              "version": {
-                "kind": "pe_resource"
-              }
-            }
-          },
-          "requires": {
-            "app": true,
-            "min_version": "2.3.0"
-          },
-          "liveness": {
-            "kind": "interactive_session"
           }
         }
       }
