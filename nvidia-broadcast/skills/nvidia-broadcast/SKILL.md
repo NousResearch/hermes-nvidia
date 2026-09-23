@@ -4,6 +4,7 @@ description: Use when controlling NVIDIA Broadcast through MCP to apply effects,
 metadata:
   author: NVIDIA Broadcast Team <RTXBroadcastFeedback@nvidia.com>
   version: 1.1.0
+  hermes_adaptation: Connection guidance rewritten for Hermes, which connects the gateway from this plugin; tool contracts unchanged from upstream 1.1.0
   tags: nvidia-broadcast, mcp, camera, microphone, audio-effects, video-effects
   domain: media
 ---
@@ -18,10 +19,8 @@ NVIDIA Broadcast applies AI effects to your camera, microphone, and speaker, and
 
 - Windows host with NVIDIA Broadcast installed. **2.2.x and older have no MCP gateway** and cannot be driven by this skill at all. When it is missing or too old, you may **offer** to install it from NVIDIA's update service — see *Installing or updating NVIDIA Broadcast* below. Never install without asking.
 - Standard executable path: `%ProgramFiles%\NVIDIA Corporation\NVIDIA Broadcast\NVIDIA Broadcast.exe`.
-- MCP gateway config readable at `%APPDATA%\nvidia-broadcast\gateway.json`.
-- Local MCP client support for Streamable HTTP over loopback.
-- **Running inside WSL:** the gateway lives on the Windows side, so both the endpoint and
-  `gateway.json` are reached differently — see *If you are running inside WSL* below.
+- Hermes has connected the `nvidia-broadcast` gateway from this plugin: its tools appear as
+  `mcp__nvidia_broadcast__*` in the deferred tool catalog. See *Connecting* below.
 
 ## Inputs
 
@@ -32,106 +31,31 @@ NVIDIA Broadcast applies AI effects to your camera, microphone, and speaker, and
 
 ## Connecting
 
-**Register the gateway with your MCP client and let the client speak the protocol.** Do not
-hand-roll HTTP requests — it is a normal Streamable HTTP MCP server, and your client already
-handles protocol version and transport. Add it to your MCP client configuration:
+**Hermes connects the gateway from this plugin; you never register or reach it yourself.** The
+plugin points Hermes at `http://127.0.0.1:18100/gateway`, and the tools appear as
+`mcp__nvidia_broadcast__*` in the deferred tool catalog. Read a schema with `tool_describe` and call
+one tool per `tool_call`. Never add an MCP client entry, never hand-roll HTTP requests, and never
+scan the port range.
 
-```json
-{
-  "mcpServers": {
-    "nvidia-broadcast": {
-      "type": "http",
-      "url": "http://127.0.0.1:18100/gateway"
-    }
-  }
-}
-```
+### When no `mcp__nvidia_broadcast__` tools are listed
 
-Or, with the Claude Code CLI:
+1. Relay the sentence Hermes gives for the server: the unavailable line in the catalog or
+   `tool_search` result, the same one the Plugins tab in Settings shows (for example, that
+   NVIDIA Broadcast must be running in the user's desktop session). Do not name a cause Hermes did
+   not report.
+2. If Hermes reports nothing and Broadcast is running, the gateway may have bound a port other than
+   `18100`: it takes the first free port in `18100`-`18109` and publishes it in
+   `%APPDATA%\nvidia-broadcast\gateway.json` (base64 of `{ "port": <number> }`). You may read that
+   file to tell the user which port Broadcast bound and that this plugin version reaches only
+   `18100`. Do not connect to the other port.
+3. If Broadcast looks missing or old, read the executable's `ProductVersion` without launching it.
+   **If the executable is not there, NVIDIA Broadcast is not installed. If it is 2.2.x or older,
+   that build has no MCP gateway.** Tell the user what you found and offer to install or update
+   it — see *Installing or updating NVIDIA Broadcast* below.
 
-```bash
-claude mcp add --transport http nvidia-broadcast http://127.0.0.1:18100/gateway
-```
-
-`18100` is the default port and is correct on almost every install. No API key or header is
-required for loopback MCP clients.
-
-### If the default port does not work
-
-The gateway takes the first free port in `18100`-`18109` and publishes the one it actually
-bound in `%APPDATA%\nvidia-broadcast\gateway.json` — base64, decoding to `{ "port": <number> }`.
-Re-read that file on every retry rather than caching the port; a restart can move it, which is
-the one case where a registered URL goes stale.
-
-1. Decode `gateway.json` and register `http://127.0.0.1:<port>/gateway` instead.
-2. If the file is missing or nothing answers, Broadcast may not be running. Launch the installed
-   `NVIDIA Broadcast.exe` with `--launch-hidden`, then reread the config and probe for up to
-   60 seconds. Never launch a second copy when the process is already running — report that agent
-   integration is unavailable or still initializing.
-
-   **Discovery is exactly these two places and nothing else:** `gateway.json` and ports
-   `18100`-`18109`. Do not search the filesystem for gateway or config files, and do not read
-   environment variables looking for an endpoint or credential — the loopback gateway publishes
-   its port only in `gateway.json` and needs no key. When both places come up empty, stop endpoint
-   discovery and continue to the version check below.
-
-   **Probe only through your MCP client.** Register the candidate URL and let the client connect;
-   a failed registration is the probe result. Never reach the gateway from a shell: no command-line
-   web clients, no throwaway request scripts, and no scanning the port range yourself. If your
-   client cannot register MCP servers at runtime, say so — and **do not stop there.** Being unable
-   to probe is not evidence about Broadcast at all, and the version check below needs no MCP client.
-   Continue to it, then follow *If your client cannot register MCP servers* below. Not being able to
-   probe never licenses shell tooling as a substitute.
-3. **Whether the probe failed or you were never able to run one**, read the executable's
-   `ProductVersion` without launching it.
-   **If the executable is not there, NVIDIA Broadcast is not installed.** **If it is 2.2.x or
-   older, that build has no MCP gateway** and no amount of retrying will produce one. Either way,
-   stop probing and relaunching, tell the user what you found, and **offer to install or update
-   it** — see *Installing or updating NVIDIA Broadcast* below. If they decline, or if installing is
-   genuinely impossible from here — no Windows interop, no PowerShell — point them to
-   <https://www.nvidia.com/broadcast-app/> and stop. **An earlier failed attempt is not one of those
-   reasons**, and neither is a download that had to be retried.
-
-### If your client cannot register MCP servers at runtime
-
-Some clients only load MCP servers from a config file at startup. That is a **client configuration
-problem, not a Broadcast problem**, and it is never a reason to fall back to "just turn it on in the
-app yourself" without checking anything. Do the version check in step 3 first — it reads the
-filesystem and needs no MCP client — then report whichever of these you actually found:
-
-- **Broadcast is missing, or is 2.2.x or older.** Offer to install or update it exactly as below.
-  Installing needs no MCP client, and it is worth doing before any config change.
-- **A 2.3+ build is installed.** Nothing is wrong with Broadcast. Tell the user to add the gateway
-  to their MCP client's configuration and restart the client, quoting the entry from *Connecting*
-  with the port you resolved. Say plainly that you cannot drive Broadcast until they do.
-
-**Name which of the two it is.** "The gateway isn't available to this session" on its own leaves the
-user unable to tell whether the app is missing, too old, or merely unconfigured — and sends them off
-to click through the UI when one config line, or an install, would have fixed it for good.
-
-### If you are running inside WSL
-
-The gateway runs in the Windows Broadcast process, so before registering anything establish that
-`127.0.0.1` in the distro really is Windows loopback, and read the port through the mounted Windows
-drive. Full procedure in `references/connection.md`; in short:
-
-1. **Detect WSL** from `/proc/sys/kernel/osrelease` — it contains `microsoft` or `WSL`. Do not
-   read environment variables to decide this.
-2. **Check `wslinfo --networking-mode`.** On `mirrored` — or a WSL 1 distro — loopback is shared,
-   so register `http://127.0.0.1:<port>/gateway` exactly as on Windows. On `nat` (the default) the
-   gateway is **unreachable from the distro**: stop, tell the user, and offer mirrored networking,
-   an MCP client running on Windows, or a tunnel terminating on Windows loopback. **Never
-   substitute another address for loopback** — not the nameserver in `/etc/resolv.conf`, the
-   default route from `ip route`, nor `$(hostname).local`; nothing is published off loopback and
-   the gateway rejects every non-loopback `Host` by design.
-3. **Go through Windows interop** for the rest: `wslpath "$(cmd.exe /c 'echo %APPDATA%' | tr -d
-   '\r')"` to reach `gateway.json`, and `powershell.exe -NoProfile -Command '...'` to launch,
-   version-check, and install. If the Windows drive is not mounted or `powershell.exe` is missing, say so and
-   stop — do not search the Linux filesystem for `gateway.json` and do not look for a Linux-side
-   substitute; ask the user to start Broadcast on Windows.
-
-See `references/connection.md` for the version-check command, endpoint discovery, startup,
-access, WSL specifics, and rate limits.
+See `references/connection.md` for the version-check command, starting Broadcast hidden, access,
+and limits. Its sections on registering the server with an MCP client, probing, and WSL do not
+apply in Hermes.
 
 On connect, the server's `instructions` already list the **exact effectIds available
 right now, grouped by section**, and the `set_effects` schema constrains `effectId` to

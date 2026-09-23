@@ -4,7 +4,7 @@ Use this reference for the seven public NVIDIA App tools when live discovery adv
 
 ## Discovery workflow
 
-Call `tools/list` before execution.
+Find the tool in Hermes's deferred tool catalog (`mcp__nvidia_app__nvapp_*`) and read its live schema with `tool_describe` before calling it.
 
 - Use only the seven tools documented below.
 - Follow these call contracts plus any narrower schema returned by the live server.
