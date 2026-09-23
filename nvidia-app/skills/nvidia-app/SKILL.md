@@ -7,6 +7,7 @@ metadata:
   domain: system-tools
   team: nvidia-app
   version: 1.1.4
+  hermes_adaptation: Connection guidance rewritten for Hermes, which connects the server from this plugin; tool contracts unchanged from upstream 1.1.4
 ---
 
 # NVIDIA App MCP Overlay
@@ -40,27 +41,25 @@ Do not select this skill for Desktop Capture, other Overlay filter mutations, NV
 ## Inputs
 
 - **Required:** A user request for a supported NVIDIA App query, mutation, or connection diagnostic.
-- **Optional:** An explicit target state, game or program identifier, tool-specific values, and client connection details. Obtain authentication tokens only from the protected discovery source described in [references/connection.md](references/connection.md); never accept or expose them as ordinary tool arguments.
+- **Optional:** An explicit target state, game or program identifier, and tool-specific values. Authentication tokens are Hermes's concern; never accept, read, or expose them.
 
-Resolve information in this order: explicit user instructions, fresh live MCP schema or state, current client connection configuration, then the applicable self-contained skill reference for static contract details. Never treat a previous tool result as current state.
+Resolve information in this order: explicit user instructions, fresh live MCP schema or state, then the applicable self-contained skill reference for static contract details. Never treat a previous tool result as current state.
 
 ## Prerequisites
 
 - Windows host with NVIDIA App installed and its NvContainer-hosted MCP plugin running.
 - Standard NVIDIA App executable path: `%ProgramFiles%\NVIDIA Corporation\NVIDIA App\CEF\NVIDIA App.exe`.
-- MCP server access is enabled when NVIDIA App exposes a master toggle.
-- For an auth-enabled build, the MCP discovery file is readable at `%LOCALAPPDATA%\NVIDIA Corporation\NvAppMcpServer\server.json`. Its absence is expected when session authentication is disabled.
+- Hermes has connected the `nvidia-app` server from this plugin: its tools appear as `mcp__nvidia_app__nvapp_*` in the deferred tool catalog. See [references/connection.md](references/connection.md).
 - NVIDIA In-Game Overlay is enabled, running, and ready before any `nvapp_overlay_` call.
-- The MCP client supports Streamable HTTP over loopback or connects through the installed stdio bridge.
 
 MCP server readiness and Overlay readiness are separate. A successful MCP connection does not establish that Overlay tools are ready.
 
 ## Instructions
 
 1. **Classify the request.** Route general NVIDIA App requests through live tool discovery. Route `nvapp_overlay_` requests through the restricted Overlay workflow. Read-only Overlay status can include fields for excluded features, but that does not authorize changing them.
-2. **Register `NVIDIA-App` in the current MCP client, or fall back explicitly.** The client is registered only when this session's live tool catalog advertises `nvapp_` tools; an open loopback port or a working stdio bridge is not registration. If those tools are absent, attempt registration per [references/connection.md](references/connection.md) before the first `nvapp_` call. Registration is the default path because it persists across turns and sessions. A reachable HTTP endpoint is not a reason to skip the attempt.
-3. **Use the direct connection only as a declared fallback.** If the user declines the configuration change, the client cannot be modified or reloaded, or registration succeeds but `nvapp_` tools still do not appear in this session, connect directly to the loopback HTTP endpoint (or the stdio bridge) and continue with the same documented tool contracts. Say which path you used and that registering `NVIDIA-App` would make access persistent. Do not silently prefer the direct path.
-4. **Discover general tools.** For a non-Overlay request, inspect `tools/list` on whichever connection you established, then read [references/general-tools.md](references/general-tools.md) before selecting or calling one of its seven documented public tools. Select only a returned tool whose description, schema, and annotations most narrowly match the user's in-scope intent, and follow any narrower live schema and annotations.
+2. **Use the tools Hermes connected.** Pick the `mcp__nvidia_app__nvapp_*` tool from the deferred tool catalog, read its live schema with `tool_describe`, and call it with `tool_call`, one tool per call. Never register another NVIDIA App MCP entry, and never open a connection yourself: no loopback HTTP requests, no stdio bridge, no reading `server.json`.
+3. **When no `nvapp_` tools are listed, say so and stop.** Relay the sentence Hermes gives for the server (the unavailable line in the catalog or `tool_search` result, the same one the Plugins tab shows). Do not search NVIDIA's folders for ports or tokens, and do not name a cause Hermes did not report. See [references/connection.md](references/connection.md).
+4. **Discover general tools.** For a non-Overlay request, read [references/general-tools.md](references/general-tools.md) before selecting or calling one of its seven documented public tools, and confirm the live schema with `tool_describe`. Select only a listed tool whose description, schema, and annotations most narrowly match the user's in-scope intent, and follow any narrower live schema and annotations.
 5. **Resolve an Overlay target state.** For an explicit start, stop, enable, disable, show, or hide request, call the mapped mutation directly. For a true toggle with no target state, read status once and invert only the corresponding Boolean.
 6. **Validate the arguments.** For general tools, follow [references/general-tools.md](references/general-tools.md) and any narrower live schema. For restricted Overlay tools, use exactly the mapped fields below. Never invent unsupported arguments.
 7. **Execute in request order.** Fulfill compound requests by issuing each supported operation as its own tool call in the user's order. Make only the calls needed for the requested operations. Respect the access tier and any consent decision; never raise access or enable another feature as a workaround.
@@ -68,34 +67,15 @@ MCP server readiness and Overlay readiness are separate. A successful MCP connec
 
 ## Connecting
 
-Try these in order and use the first that works:
+Hermes connects NVIDIA App's MCP server from this plugin. It reads the current URL and token from `%LOCALAPPDATA%\NVIDIA Corporation\NVIDIA App\McpServer\server.json` on every connection, so a new port or token after an NVIDIA App restart needs nothing from you. There is no other connection path in Hermes: no client entry to add, no direct HTTP, no stdio bridge.
 
-1. An existing valid `NVIDIA-App` entry in the current MCP client.
-2. A newly registered `NVIDIA-App` entry in that client.
-3. A direct Streamable HTTP connection to the loopback endpoint.
-4. The stdio bridge, when HTTP is unavailable or the client manages a local relay process.
-
-Options 3 and 4 are legitimate fallbacks, not workarounds; report which one you used.
-
-The default auth-disabled HTTP endpoint is:
-
-```text
-http://127.0.0.1:13508/mcp
-```
-
-The installed stdio bridge is:
-
-```text
-%ProgramFiles%\NVIDIA Corporation\NVIDIA App\McpServer\NvAppMcpServer.exe
-```
-
-The stdio executable relays to the persistent server; it does not start or enable that server. A missing `server.json` is expected in the current auth-disabled source default. Auth-enabled builds require the fresh URL and token from the discovery file; never print, log, commit, or place the token in ordinary tool arguments.
+If NVIDIA App restarts its MCP server while a call is in flight, that call fails with a session-expired error and an unknown outcome; Hermes has already reconnected. Repeat a read once. Ask before repeating a mutation.
 
 ## General NVIDIA App operations
 
 Read [references/general-tools.md](references/general-tools.md) before selecting or calling a general NVIDIA App tool. It contains the seven supported tool names, exact arguments, enums, conditional schemas, and prerequisite checks.
 
-Use only a documented tool advertised by live `tools/list`. The packaged instructions are self-contained and do not depend on repository-internal schema sources.
+Use only a documented tool that Hermes lists for this session. The packaged instructions are self-contained and do not depend on repository-internal schema sources.
 
 ## Restricted Overlay operations
 
@@ -122,8 +102,8 @@ Never invoke `toggle_desktop_capture`. For `nvapp_overlay_configure_filters`, us
 
 ## Decision rules
 
-- If this session's MCP catalog has no `nvapp_` tools, attempt `NVIDIA-App` registration before connecting directly. Once registration is refused or has failed, a direct HTTP or stdio connection is allowed for the rest of the session without re-asking.
-- Whichever connection you use, honor the same tool names, schemas, access tier, and Overlay restrictions. The fallback changes the transport only, never the authorized surface.
+- If this session's catalog has no `nvapp_` tools, relay Hermes's sentence for the server and stop; never connect by another path.
+- If a tool returns an error, report it with its code. Never look for the same data in NVIDIA's files, caches, or databases.
 - For a true request to toggle recording, Instant Replay, Highlights, Statistics Overlay, or RTX Dynamic Vibrance, call `nvapp_overlay_get_status` once and invert only `recordingActive`, `instantReplayEnabled`, `highlightsEnabled`, `statsOverlayEnabled`, or `rtxDvc`, respectively.
 - If the required status field is absent, ask whether to enable or disable instead of guessing. Never convert an omitted field to `false`.
 - `nvapp_overlay_capture` accepts one action, not an action list.
@@ -143,7 +123,7 @@ Never invoke `toggle_desktop_capture`. For `nvapp_overlay_configure_filters`, us
 
 ## Limitations
 
-- Installed NVIDIA App versions and access levels can expose different general tools and output contracts; live `tools/list` is authoritative.
+- Installed NVIDIA App versions and access levels can expose different general tools and output contracts; the tools Hermes lists for this session and their live schemas are authoritative.
 - MCP readiness does not guarantee Overlay readiness, and a successful mutation message does not prove more than the returned result.
 - The restricted workflow cannot mutate Desktop Capture or filters other than RTX Dynamic Vibrance, choose screenshot format or destination, or configure Statistics Overlay layout and styling.
 - Missing fields are unknown, not implicit false values, and unavailable tools or backend timeouts must not be replaced with inferred data.
@@ -152,7 +132,7 @@ Never invoke `toggle_desktop_capture`. For `nvapp_overlay_configure_filters`, us
 
 ### Get driver status
 
-For a request such as "Show my NVIDIA driver status," first check whether the current MCP client advertises `nvapp_` tools. If it does not, offer to register `NVIDIA-App`; if the user declines or registration is not possible, connect directly to the loopback endpoint and say so. Then call `tools/list` on that connection and confirm `nvapp_client_get_driver_status` is advertised with an empty-object input schema. If it is unavailable, explain that the connected NVIDIA App version or access level does not expose this workflow; do not substitute a similarly named tool without validating its live schema.
+For a request such as "Show my NVIDIA driver status," find `mcp__nvidia_app__nvapp_client_get_driver_status` in the deferred tool catalog and confirm with `tool_describe` that its input schema is an empty object. If no `nvapp_` tools are listed, relay Hermes's sentence for the server and stop. If the other `nvapp_` tools are listed but this one is not, explain that the connected NVIDIA App version or access level does not expose this workflow; do not substitute a similarly named tool without validating its live schema.
 
 Invoke:
 
@@ -198,7 +178,9 @@ For “Take a PNG screenshot in `D:\Shots`,” explain that the tool cannot sele
 
 | Error or symptom | Likely cause | Response |
 |---|---|---|
-| `service_disabled` | Persistent MCP server access is disabled | Ask the user to enable MCP server access in NVIDIA App Settings; do not repeatedly spawn bridges. |
+| No `nvapp_` tools in the catalog | Hermes has not connected the server in this session | Relay Hermes's sentence for the server; do not connect manually or search NVIDIA's folders. |
+| Session-expired transport error, outcome unknown | NVIDIA App restarted its MCP server; Hermes reconnected | Repeat a read once; ask before repeating a mutation. |
+| `service_disabled` | Persistent MCP server access is disabled | Ask the user to enable MCP server access in NVIDIA App Settings. |
 | `overlay_not_available` | MCP is connected but In-Game Overlay is not ready | Ask the user to enable or start In-Game Overlay, then retry only if requested. |
 | `overlay_timeout` | Overlay did not answer before the deadline | Preserve `retriable`; retry at most once when the result allows retrying and the retry remains within the request, then report the failure and ask before trying again. |
 | `access_level_restricted` | Current MCP access ceiling blocks the tool | Report the restriction; do not raise access implicitly. |
@@ -208,7 +190,7 @@ Overlay mutations return a human-readable message rather than structured success
 
 ## References
 
-- Read [references/connection.md](references/connection.md) for client configuration, ports, discovery and authentication, protocol lifecycle, readiness, and connection troubleshooting.
+- Read [references/connection.md](references/connection.md) for how Hermes connects the server, what to do when its tools are missing or a call hits a restart, readiness, and connection troubleshooting.
 - Read [references/general-tools.md](references/general-tools.md) for live discovery, schema use, routing, and result handling for non-Overlay NVIDIA App operations.
 - Read [references/overlay-capture.md](references/overlay-capture.md) for recording, Instant Replay, Highlights, screenshots, unsupported qualifiers, access, and capture errors.
 - Read [references/overlay-state.md](references/overlay-state.md) for status fields, true toggles, Statistics Overlay visibility, RTX Dynamic Vibrance, and current-game lookup.

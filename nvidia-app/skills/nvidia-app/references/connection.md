@@ -1,171 +1,32 @@
-# NVIDIA App MCP Connection
+# NVIDIA App MCP Connection (Hermes)
 
-## Transport overview
+## Hermes owns the connection
 
-NVIDIA App exposes one persistent MCP server from its NvContainer-hosted plugin and supports two client transports:
+The `nvidia-app` plugin declares NVIDIA App's MCP server, and Hermes connects it. You never register, configure, or open a connection yourself.
 
-- Streamable HTTP over loopback.
-- A stdio bridge executable that relays MCP messages to the server's per-user named pipe.
+- Hermes reads `%LOCALAPPDATA%\NVIDIA Corporation\NVIDIA App\McpServer\server.json` on every connection and uses its `http` URL and `token`. The URL in the plugin's `mcp.json` is a placeholder; the port NVIDIA App publishes can differ between builds and machines.
+- The connected tools are named `mcp__nvidia_app__nvapp_*`. Find them in the deferred tool catalog, read a schema with `tool_describe`, and call one with `tool_call`.
+- The token never appears in a tool argument, a transcript, or a log, and you never need it.
 
-The stdio executable is a relay, not a standalone server. If NVIDIA App's MCP master toggle is disabled, launching the bridge does not enable or start the persistent server.
+## When no `nvapp_` tools are listed
 
-## Agent-side configuration
+Hermes lists only what is connected and offerable. When the catalog has no `nvapp_` tools:
 
-When a connection is needed and `NVIDIA-App` is not already registered with the current MCP client, add it to that client using an available MCP-management capability or the client's documented configuration mechanism. Do not stop at showing configuration JSON when the agent can apply it directly. Prefer registration even when the loopback endpoint already answers, because a registered entry persists and exposes the tools to later turns and sessions.
+1. Report the sentence Hermes gives for the server: the unavailable line in the tool catalog or `tool_search` result, which is the same sentence the Plugins tab in Settings shows. It names one user action, such as starting NVIDIA App.
+2. Stop there. Do not connect to a loopback port, do not run the stdio bridge, do not script HTTP requests, do not read `server.json`, and do not search NVIDIA's folders for ports, tokens, or databases. None of these makes the tools appear in this session, and a manual transport bypasses the approvals Hermes applies to these tools.
+3. Do not name a cause Hermes did not report. In particular, do not tell the user to change an NVIDIA App setting unless a tool returned `service_disabled` or `overlay_not_available`.
 
-- Inspect the existing client configuration first; reuse a valid `NVIDIA-App` entry and do not create a duplicate.
-- Register with the Streamable HTTP connection described below. Use the stdio bridge only when HTTP is unavailable or the current client requires or manages a local relay process. Obtain any required approval before changing client configuration, and never expose or persist authentication material outside the protected client configuration.
-- After adding or reloading the entry, call `tools/list` to verify the connection and tool discovery.
-- If the agent cannot modify or reload its own MCP configuration, provide the exact configuration and state the specific action the user must perform. Do not guess an unverified configuration location or format.
+## When a tool call fails
 
-### Direct-connection fallback
-
-Connect directly to the endpoints below, without a client entry, when any of these holds:
-
-- The user declines or defers the client configuration change.
-- The client offers no way for the agent to add or reload an MCP entry.
-- The entry was written, but `nvapp_` tools are still absent from the current session and the user does not want to restart or reload.
-
-In that case, complete the user's request over Streamable HTTP (or the stdio bridge) using the same documented tools, schemas, and restrictions. Name the fallback in your reply and note that registering `NVIDIA-App` avoids repeating it. Read `server.json` fresh on each auth-enabled connection and keep the token out of transcripts, logs, and command lines.
-
-- If connection or tool discovery still fails after the applicable configuration and reload attempts, instruct the user to verify that NVIDIA App is installed, that it is the latest available version (11.0.9.5xx or above), and that MCP server access is enabled in NVIDIA App Settings before retrying.
-
-## HTTP connection
-
-The compiled defaults are:
-
-```text
-Host:     127.0.0.1
-Port:     13508
-Endpoint: http://127.0.0.1:13508/mcp
-```
-
-Typical client configuration when session authentication is disabled:
-
-```json
-{
-  "mcpServers": {
-    "NVIDIA-App": {
-      "url": "http://127.0.0.1:13508/mcp"
-    }
-  }
-}
-```
-
-The server registers `/mcp/` with http.sys and reports its client URL without the trailing slash.
-
-### Port fallback
-
-If registration of port `13508` fails for a reason other than `ERROR_ACCESS_DENIED`, the server falls back in two tiers. It first tries the adjacent range next to the default, then the ephemeral range:
-
-```text
-Tier 1 (adjacent):  13509, 13510, 13511, 13512, 13513,
-                    13514, 13515, 13516, 13517, 13518
-Tier 2 (ephemeral): 49152, 49153, 49154, 49155, 49156,
-                    49157, 49158, 49159, 49160, 49161
-```
-
-When an auth-enabled discovery file exists, use its `http` value rather than assuming port `13508`. When no discovery file exists, an MCP client cannot generically discover a fallback port from disk; use the default endpoint, the NVIDIA App-reported `http_url`, or the stdio bridge.
-
-If http.sys returns `ERROR_ACCESS_DENIED`, the backend does not try the fallback range. NVIDIA App continues in pipe-only degraded mode when the named-pipe server is available.
-
-## Discovery and token file
-
-Auth-enabled builds write this plain JSON file at server startup:
-
-```text
-%LOCALAPPDATA%\NVIDIA Corporation\NvAppMcpServer\server.json
-```
-
-Example shape:
-
-```json
-{
-  "pipe": "<per-user named-pipe name>",
-  "http": "http://127.0.0.1:13508/mcp/",
-  "token": "<fresh 256-bit session token>",
-  "version": "1.0.0",
-  "pid": 12345
-}
-```
-
-The `http` property is omitted when HTTP failed to start. The file is protected for the creating user, the token is regenerated at server startup, and the file is removed when the plugin uninitializes.
-
-Read the file fresh after every server restart. Never print, log, persist elsewhere, or place the token in ordinary tool arguments.
-
-## Authenticated HTTP example
-
-Use the `http` and `token` values read from the same fresh `server.json`:
-
-```json
-{
-  "mcpServers": {
-    "NVIDIA-App": {
-      "url": "{http-from-server.json}",
-      "headers": {
-        "Authorization": "Bearer {token-from-server.json}"
-      }
-    }
-  }
-}
-```
-
-Do not copy the placeholder literally and do not commit a real token.
-
-## Stdio connection
-
-Installed bridge path:
-
-```text
-%ProgramFiles%\NVIDIA Corporation\NVIDIA App\McpServer\NvAppMcpServer.exe
-```
-
-Typical configuration when session authentication is disabled:
-
-```json
-{
-  "mcpServers": {
-    "NVIDIA-App": {
-      "command": "C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\McpServer\\NvAppMcpServer.exe",
-      "args": []
-    }
-  }
-}
-```
-
-For an auth-enabled build, provide the fresh token through the bridge environment:
-
-```json
-{
-  "mcpServers": {
-    "NVIDIA-App": {
-      "command": "C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\McpServer\\NvAppMcpServer.exe",
-      "args": [],
-      "env": {
-        "NVAPP_MCP_TOKEN": "{token-from-server.json}"
-      }
-    }
-  }
-}
-```
-
-The bridge resolves the current user's named-pipe name, connects with retry, and relays binary-safe stdio. If the pipe is unavailable and the MCP readiness event is not signaled, it reports `service_disabled` with guidance to enable MCP server access in NVIDIA App Settings.
-
-## MCP protocol lifecycle
-
-The server accepts two protocol eras:
-
-- Modern `2026-07-28`: stateless HTTP requests; it does not emit `Mcp-Session-Id` or use standalone session-stream or session-close requests.
-- Legacy `2025-11-25` and earlier supported versions (`2024-11-05`, `2025-03-26`): initialize creates a session, the response carries `Mcp-Session-Id`, subsequent requests echo it, and the client manages the notification stream and session closure.
-
-Ordinary MCP clients should manage this lifecycle. Do not manually add legacy session headers to a modern connection.
+- **NVIDIA App restarted its MCP server.** The server's host process can restart on its own; each restart issues a new token on the same port. Hermes reconnects with the new token. The call in flight at that moment fails with a message that the transport session expired and the outcome is unknown. For a read (status, driver, applications, laptop features, current game), call it again once. For a mutation, tell the user the outcome is unknown and ask before repeating it.
+- **The tool returned an error** (for example `Application_GetState_4 failed with 4`). Report the error and its code. Do not look for the same information in NVIDIA's files, caches, or databases.
 
 ## Readiness sequence
 
 Connection success and Overlay success are separate:
 
-1. NVIDIA App's MCP master toggle allows the persistent NvContainer plugin to run.
-2. The named-pipe and, when available, HTTP transports start.
+1. NVIDIA App's NvContainer-hosted MCP plugin runs.
+2. Its HTTP transport starts and `server.json` is written.
 3. The MCP server readiness event is signaled.
 4. NVIDIA In-Game Overlay independently signals its own readiness event.
 
@@ -175,10 +36,9 @@ The restricted Overlay tools in this skill can return `overlay_not_available` ev
 
 | Symptom | Likely cause | Response |
 |---|---|---|
-| `server.json` is missing but default HTTP works | Session authentication is disabled | Continue without a token. |
-| `server.json` is missing and neither transport connects | MCP master toggle is off or the server did not start | Ask the user to enable MCP server access in NVIDIA App Settings. |
-| Port `13508` refuses connection | HTTP used a fallback port, HTTP startup failed, or the server is disabled | Use the discovery/runtime URL when available or use stdio. |
-| Discovery file lacks `http` | HTTP failed and the server is in pipe-only mode | Use the stdio bridge. |
-| Auth-enabled connection has read-only access | Token is missing, invalid, or stale | Reread `server.json` and reconfigure the token without exposing it. |
-| Stdio returns `service_disabled` | Persistent server readiness event is not signaled | Enable MCP server access; do not repeatedly spawn bridge processes. |
-| MCP connects but Overlay calls return `overlay_not_available` | In-Game Overlay is disabled or not running | Enable NVIDIA App Settings > Features > In-Game Overlay, then retry. |
+| No `nvapp_` tools, and Hermes reports NVIDIA App is not running | NVIDIA App or its MCP host is stopped | Relay Hermes's sentence: start NVIDIA App, then try again. |
+| No `nvapp_` tools, and Hermes reports nothing about `nvidia-app` | The server is not connected in this session | Say the NVIDIA App tools are not available in this chat and suggest a new chat; do not connect manually. |
+| A call fails with a session-expired transport error | NVIDIA App restarted its MCP server | Repeat a read once; ask before repeating a mutation. |
+| A tool returns `service_disabled` | NVIDIA App's MCP server access is disabled | Ask the user to enable MCP server access in NVIDIA App Settings. |
+| Overlay calls return `overlay_not_available` | In-Game Overlay is disabled or not running | Ask the user to enable NVIDIA App Settings > Features > In-Game Overlay, then retry if they ask. |
+| A tool returns `access_level_restricted` | The MCP access ceiling blocks the tool | Report the restriction; do not raise access. |

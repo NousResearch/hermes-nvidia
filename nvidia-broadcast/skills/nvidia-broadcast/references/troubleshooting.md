@@ -1,5 +1,7 @@
 # Troubleshooting
 
+> **In Hermes:** the `nvidia-broadcast` plugin connects the gateway for you. Ignore every step below that registers the server with an MCP client, probes ports, or reaches the gateway from WSL. When the `mcp__nvidia_broadcast__` tools are missing, relay the sentence Hermes gives for the server.
+
 The full symptom table. `SKILL.md` carries the subset you hit most often.
 
 | Symptom | Cause | Solution |

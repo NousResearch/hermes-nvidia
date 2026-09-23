@@ -1,5 +1,7 @@
 # Connection & protocol
 
+> **In Hermes:** the `nvidia-broadcast` plugin connects the gateway for you. Ignore every step below that registers the server with an MCP client, probes ports, or reaches the gateway from WSL. When the `mcp__nvidia_broadcast__` tools are missing, relay the sentence Hermes gives for the server.
+
 ## Registering the server (do this first)
 
 The gateway is a standard Streamable HTTP MCP server. Register it and let your MCP client
