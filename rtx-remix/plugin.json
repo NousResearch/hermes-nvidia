@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "rtx-remix",
+  "version": "0.1.0",
+  "description": "MCP server and skill for the NVIDIA RTX Remix Toolkit on Windows; tools appear while the Toolkit is running (windowed or headless) on port 8012.",
+  "author": {
+    "name": "Nous Research"
+  },
+  "repository": "https://github.com/NousResearch/hermes-nvidia",
+  "license": "MIT",
+  "keywords": [
+    "nvidia",
+    "mcp",
+    "windows",
+    "rtx-remix",
+    "modding",
+    "usd"
+  ]
+}
