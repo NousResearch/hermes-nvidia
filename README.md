@@ -24,7 +24,7 @@ hermes://plugin/install?repo=NousResearch/hermes-nvidia/nvidia-broadcast&enable=
 
 Windows only. The corresponding application must be installed at the minimum version or the install refuses; its tools appear while the application is running.
 
-`rtx-remix` differs. The Toolkit is a package you unpack anywhere, with no install record, so the install does not check for it: it succeeds on any OS, and the tools appear only while the Toolkit is running. Install it from the repo subdirectory:
+`rtx-remix` differs. The Toolkit is a package you unpack anywhere, with no install record, so Hermes cannot check that it is installed. The plugin requires an NVIDIA GPU instead: the install is refused on a machine without one, and the tools appear only while the Toolkit is running. This needs a Hermes release that supports `requires.gpu` (NousResearch/hermes-agent#129441); older releases reject the plugin with `requires has unknown keys ['gpu']`. Install it from the repo subdirectory:
 
 ```
 hermes plugins install NousResearch/hermes-nvidia/rtx-remix

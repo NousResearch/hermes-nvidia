@@ -42,7 +42,7 @@ Your tool list already carries every tool and its schema. What it does not carry
 
 ## Troubleshooting
 
-Before planning, check for `remix_*` tools. If none are listed, Hermes has no connection to the Toolkit in this session and shows no status line for it. Tell the user to start the RTX Remix Toolkit (the headless launcher above, or the Toolkit app) and then start a new Hermes session, and stop. Do not probe loopback ports, read Toolkit logs for an endpoint, or search the disk for the Toolkit; none of these makes the tools appear.
+Before planning, check for `remix_*` tools. If Hermes gives a sentence for rtx-remix (in the tool catalog or in a tool error), relay that sentence and stop. If no `remix_*` tools are listed and there is no sentence, Hermes has no connection to the Toolkit in this session. Tell the user to start the RTX Remix Toolkit (the headless launcher above, or the Toolkit app) and then start a new Hermes session, and stop. Do not probe loopback ports, read Toolkit logs for an endpoint, or search the disk for the Toolkit; none of these makes the tools appear.
 
 If the user says the Toolkit is running and the tools are still missing, port 8012 was probably busy and the Toolkit fell back to another port, which this plugin does not follow. Ask the user to free port 8012 and restart the Toolkit.
 
