@@ -295,14 +295,14 @@ Do **not** follow with `set_camera_resolution` (that is a second stream restart)
 
 | Symptom | Cause | Solution |
 | --- | --- | --- |
-| Endpoint refuses the connection | Broadcast is not running | Launch `NVIDIA Broadcast.exe --launch-hidden`, then reread `gateway.json` and reprobe for up to 60 seconds |
-| Still unreachable after launching and reprobing | The app is missing, or the build predates MCP | Read the exe's `ProductVersion`; if absent or 2.2.x or older, stop retrying and offer to install or update it — on a no, link https://www.nvidia.com/broadcast-app/ |
+| No `mcp__nvidia_broadcast__` tools, and Hermes reports Broadcast is not running | Broadcast is not running | Relay Hermes's sentence. Ask the user to open NVIDIA Broadcast, or say you are starting it and launch `NVIDIA Broadcast.exe --launch-hidden`. Then search again with `tool_search`; Hermes can take a few minutes to connect |
+| Still no tools after Broadcast started | The app is missing, or the build predates MCP | Read the exe's `ProductVersion`; if absent or 2.2.x or older, stop retrying and offer to install or update it — on a no, link https://www.nvidia.com/broadcast-app/ |
 | The update endpoint returns `[]`, or the user declines the install | Nothing newer is published, or there is no consent | Report it, link https://www.nvidia.com/broadcast-app/, and stop — download nothing and do not raise it again unprompted |
 | A later request needs Broadcast and an earlier install attempt failed | The attempt ended; the install path did not | Say in one line what happened last time and offer to try again. Never answer with "install it yourself" because a previous attempt failed |
 | The downloaded installer is shorter than `size` | Incomplete transfer — the most common failure in this flow | Not a security event. Report how far it got and retry the download, up to two more attempts in a fresh directory |
 | A **full-length** installer fails SHA-512 or the NVIDIA signature check | Substituted or corrupted content | Do not run it. Report which check failed and where the file is, then stop — do not re-download it now, but offer a fresh attempt when the user next asks for something needing Broadcast |
-| `ProductVersion` is still 2.2.x after installing | That is the newest build the update service publishes | Say the MCP gateway needs 2.3.x, link the download page, and stop probing |
-| `127.0.0.1:<port>` refused, and you are inside WSL | NAT-mode WSL has its own loopback; Windows loopback is unreachable | Check `wslinfo --networking-mode`; on `nat` report it and offer mirrored networking, a Windows-side client, or a loopback-terminating tunnel — never swap in the host IP |
+| `ProductVersion` is still 2.2.x after installing | That is the newest build the update service publishes | Say the MCP gateway needs 2.3.x, link the download page, and stop checking |
+| Hermes reports Broadcast unreachable, and Hermes runs inside WSL | NAT-mode WSL has its own loopback; Windows loopback is unreachable | Check `wslinfo --networking-mode`; on `nat` report it and offer mirrored networking, a Windows-side client, or a loopback-terminating tunnel — never swap in the host IP |
 | Tool error `-33102` or `-33103` | Rate limited, or too many in-flight calls | Back off using the limit in `data`, then retry |
 | `requiresUserInput: true` with `frameRateOptions` | That frame size exists at several frame rates | Ask the user which fps, then retry with `frameRate` |
 | Error `-33201`, or `failed[].reason` is `device_not_selected` | That effect's camera, mic, or speaker is not selected | Name the device type and ask the user to select it; do not retry unchanged or pick one silently |

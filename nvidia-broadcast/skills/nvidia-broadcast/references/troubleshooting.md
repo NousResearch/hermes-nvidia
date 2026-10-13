@@ -6,9 +6,9 @@ The full symptom table. `SKILL.md` carries the subset you hit most often.
 
 | Symptom | Cause | Solution |
 | --- | --- | --- |
-| Endpoint refuses the connection | Broadcast is not running | Launch `NVIDIA Broadcast.exe --launch-hidden`, then reread `gateway.json` and reprobe for up to 60 seconds |
+| No `mcp__nvidia_broadcast__` tools, and Hermes reports Broadcast is not running | Broadcast is not running | Relay Hermes's sentence. Ask the user to open NVIDIA Broadcast, or say you are starting it and launch `NVIDIA Broadcast.exe --launch-hidden`. Then search again with `tool_search`; Hermes can take a few minutes to connect |
 | Still unreachable, and `NVIDIA Broadcast.exe` is not at the standard path | NVIDIA Broadcast is not installed | Tell the user the app is not installed and is required for this skill, then offer to install it (`installation.md`); on a no, link https://www.nvidia.com/broadcast-app/ and stop |
-| Still unreachable after launching and reprobing | The installed build may predate MCP | Read the exe's `ProductVersion`; if 2.2.x or older, tell the user it does not support MCP and offer to update it (`installation.md`) — then stop retrying either way |
+| Still no tools after Broadcast started | The installed build may predate MCP | Read the exe's `ProductVersion`; if 2.2.x or older, tell the user it does not support MCP and offer to update it (`installation.md`) — then stop retrying either way |
 | The gateway is unreachable on a 2.3+ build | Broadcast could not initialize, or agent integration is disabled | Report that; **do not** offer to reinstall — this is not an install problem |
 | Your client cannot register MCP servers at runtime | A client-configuration gap, not a Broadcast fault | Do not stop at "the gateway isn't available". Still run the version check: if the app is missing or 2.2.x, offer to install or update it; if 2.3+ is installed, tell the user to add the gateway to their MCP client config and restart the client |
 | You told the user to enable the effect in the Broadcast UI by hand | You concluded the gateway was unavailable without diagnosing why | A manual workaround is the last resort, not the first. Establish whether the app is missing, too old, or merely unconfigured, and say which |
@@ -30,7 +30,7 @@ The full symptom table. `SKILL.md` carries the subset you hit most often.
 | A **full-length** installer fails its SHA-512 check | Substituted or corrupted content | Do not run it. Report the path and stop; do not re-download, a full-length wrong-hash file will not fix itself |
 | A **full-length** installer's signature is not `Valid`, or the signer is not `CN=NVIDIA Corporation,...` | The file is not a genuine NVIDIA build | Do not run it. Report the path and stop; this failure is final |
 | `ProductVersion` is unchanged right after the installer exits | A self-extracting installer can outlive the process you launched — or the user cancelled | Re-read it for up to 60 seconds; if it still has not changed, report that as-is and do not relaunch the installer |
-| `ProductVersion` is still 2.2.x after a successful install | That is the newest build the update service publishes | Say the MCP gateway needs 2.3.x, link https://www.nvidia.com/broadcast-app/, and stop probing |
+| `ProductVersion` is still 2.2.x after a successful install | That is the newest build the update service publishes | Say the MCP gateway needs 2.3.x, link https://www.nvidia.com/broadcast-app/, and stop checking |
 | Cannot install from WSL | Windows interop is disabled, so `powershell.exe` is unavailable | Ask the user to install on the Windows side; there is no Linux-side installer or substitute |
 | Worked earlier, unreachable now | Broadcast selected another port in `18100`-`18109` | Reread and base64-decode `gateway.json` on every retry |
 | `127.0.0.1:<port>` refused, and you are inside WSL | NAT-mode WSL has its own loopback, so a Windows loopback listener is unreachable | Check `wslinfo --networking-mode`; on `nat` report it and offer mirrored networking, a Windows-side MCP client, or a tunnel terminating on Windows loopback |
