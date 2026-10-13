@@ -58,7 +58,7 @@ MCP server readiness and Overlay readiness are separate. A successful MCP connec
 
 1. **Classify the request.** Route general NVIDIA App requests through live tool discovery. Route `nvapp_overlay_` requests through the restricted Overlay workflow. Read-only Overlay status can include fields for excluded features, but that does not authorize changing them.
 2. **Use the tools Hermes connected.** Pick the `mcp__nvidia_app__nvapp_*` tool from the deferred tool catalog, read its live schema with `tool_describe`, and call it with `tool_call`, one tool per call. Never register another NVIDIA App MCP entry, and never open a connection yourself: no loopback HTTP requests, no stdio bridge, no reading `server.json`.
-3. **When no `nvapp_` tools are listed, say so and stop.** Relay the sentence Hermes gives for the server (the unavailable line in the catalog or `tool_search` result, the same one the Plugins tab shows). Do not search NVIDIA's folders for ports or tokens, and do not name a cause Hermes did not report. See [references/connection.md](references/connection.md).
+3. **When no `nvapp_` tools are listed, say so and stop.** Relay the sentence Hermes gives for the server (the unavailable line in the catalog or `tool_search` result, the same one the Plugins tab shows). Do not search NVIDIA's folders for ports or tokens, and do not name a cause Hermes did not report. You may then offer the setup help in *First run on a new computer*. See [references/connection.md](references/connection.md).
 4. **Discover general tools.** For a non-Overlay request, read [references/general-tools.md](references/general-tools.md) before selecting or calling one of its seven documented public tools, and confirm the live schema with `tool_describe`. Select only a listed tool whose description, schema, and annotations most narrowly match the user's in-scope intent, and follow any narrower live schema and annotations.
 5. **Resolve an Overlay target state.** For an explicit start, stop, enable, disable, show, or hide request, call the mapped mutation directly. For a true toggle with no target state, read status once and invert only the corresponding Boolean.
 6. **Validate the arguments.** For general tools, follow [references/general-tools.md](references/general-tools.md) and any narrower live schema. For restricted Overlay tools, use exactly the mapped fields below. Never invent unsupported arguments.
@@ -70,6 +70,21 @@ MCP server readiness and Overlay readiness are separate. A successful MCP connec
 Hermes connects NVIDIA App's MCP server from this plugin. It reads the current URL and token from `%LOCALAPPDATA%\NVIDIA Corporation\NVIDIA App\McpServer\server.json` on every connection, so a new port or token after an NVIDIA App restart needs nothing from you. There is no other connection path in Hermes: no client entry to add, no direct HTTP, no stdio bridge.
 
 If NVIDIA App restarts its MCP server while a call is in flight, that call fails with a session-expired error and an unknown outcome; Hermes has already reconnected. Repeat a read once. Ask before repeating a mutation.
+
+## First run on a new computer
+
+On a fresh computer NVIDIA App may not be installed or started yet. When no `nvapp_` tools are listed, relay Hermes's sentence first (Instruction 3), then you may offer setup help. Start with one soft check that changes nothing: it tests one path and one process name, reads no NVIDIA files, and opens no connection.
+
+```powershell
+$exe = "$env:ProgramFiles\NVIDIA Corporation\NVIDIA App\CEF\NVIDIA App.exe"
+"installed=$(Test-Path $exe) running=$([bool](Get-Process -Name 'NVIDIA App' -ErrorAction SilentlyContinue))"
+```
+
+- **Not installed:** say NVIDIA App is not installed on this computer and offer NVIDIA's download page, <https://www.nvidia.com/en-us/software/nvidia-app/>. The user downloads and runs the installer; never download or run it yourself.
+- **Installed but not running:** ask the user to open NVIDIA App from the Start menu and leave it running.
+- **Installed and running, still no tools:** relay Hermes's sentence and nothing more. Suggest an NVIDIA App setting only after a tool returns `service_disabled` or `overlay_not_available`.
+
+When the user says it is done, search for the tools again with `tool_search` (for example, `nvidia app driver status`). If they are listed, continue with the original request. If not, repeat the soft check and relay Hermes's current sentence; Hermes can take a few minutes to connect after NVIDIA App starts, so say so and offer to check again later. This guidance is an offer, never a requirement, and it never replaces Hermes's connection.
 
 ## General NVIDIA App operations
 
@@ -102,7 +117,7 @@ Never invoke `toggle_desktop_capture`. For `nvapp_overlay_configure_filters`, us
 
 ## Decision rules
 
-- If this session's catalog has no `nvapp_` tools, relay Hermes's sentence for the server and stop; never connect by another path.
+- If this session's catalog has no `nvapp_` tools, relay Hermes's sentence for the server and stop; never connect by another path. First-run setup help (see *First run on a new computer*) is an offer, not a connection.
 - If a tool returns an error, report it with its code. Never look for the same data in NVIDIA's files, caches, or databases.
 - For a true request to toggle recording, Instant Replay, Highlights, Statistics Overlay, or RTX Dynamic Vibrance, call `nvapp_overlay_get_status` once and invert only `recordingActive`, `instantReplayEnabled`, `highlightsEnabled`, `statsOverlayEnabled`, or `rtxDvc`, respectively.
 - If the required status field is absent, ask whether to enable or disable instead of guessing. Never convert an omitted field to `false`.
