@@ -68,8 +68,11 @@ If the endpoint is unavailable:
    ```powershell
    Start-Process -FilePath "$env:ProgramFiles\NVIDIA Corporation\NVIDIA Broadcast\NVIDIA Broadcast.exe" -ArgumentList "--launch-hidden" -WindowStyle Hidden
    ```
-4. For up to 60 seconds, repeatedly reread and base64-decode `gateway.json`, then probe the
-   resulting endpoint. Treat a responsive MCP endpoint—not process creation—as readiness.
+4. **In Hermes:** do not reread `gateway.json` and do not probe the endpoint; Hermes connects the
+   gateway itself. Search for the tools again with `tool_search`; Hermes can take a few minutes to
+   connect after Broadcast starts. Readiness is the tools being listed. **Other MCP clients:** for
+   up to 60 seconds, repeatedly reread and base64-decode `gateway.json`, then probe the resulting
+   endpoint. Treat a responsive MCP endpoint—not process creation—as readiness.
 5. On timeout, check whether the app is present and whether the build predates MCP before
    reporting anything. This reads the filesystem and does not launch anything:
    ```powershell
@@ -77,7 +80,7 @@ If the endpoint is unavailable:
    if (Test-Path $exe) { (Get-Item $exe).VersionInfo.ProductVersion } else { "not installed" }
    ```
    **If the executable is not there, NVIDIA Broadcast is not installed.** Tell the user the app
-   is not installed on this machine and that the skill requires it. Stop probing and relaunching,
+   is not installed on this machine and that the skill requires it. Stop checking and relaunching,
    then **offer to install it** and follow `installation.md` if they accept. If they decline,
    point them to <https://www.nvidia.com/broadcast-app/> and stop.
 
@@ -93,6 +96,8 @@ If the endpoint is unavailable:
 6. If the version is newer than 2.2.x, or cannot be read, the installed build is not the problem.
    Separate the two reasons you might be here:
 
+   - **In Hermes**, neither reason below applies: relay the sentence Hermes gives for the server and
+     name no other cause.
    - **You were never able to probe**, because your client cannot register MCP servers at runtime.
      Nothing is wrong with Broadcast. Say so, and tell the user to add the gateway to their MCP
      client's configuration and restart the client. Do not report this as a Broadcast failure and do
