@@ -61,6 +61,32 @@ On connect, the server's `instructions` already list the **exact effectIds avail
 right now, grouped by section**, and the `set_effects` schema constrains `effectId` to
 that live set. So you can act immediately — you do **not** need a discovery call first.
 
+### First run on a new computer
+
+On a fresh computer NVIDIA Broadcast may not be installed or started yet. When no
+`mcp__nvidia_broadcast__` tools are listed, relay Hermes's sentence first (step 1 above), then you
+may offer setup help. Start with one soft check that changes nothing: it reads the executable's
+version without launching it and looks for its process.
+
+```powershell
+$exe = "$env:ProgramFiles\NVIDIA Corporation\NVIDIA Broadcast\NVIDIA Broadcast.exe"
+$ver = if (Test-Path $exe) { (Get-Item $exe).VersionInfo.ProductVersion } else { "not installed" }
+"version=$ver running=$([bool](Get-Process -Name 'NVIDIA Broadcast' -ErrorAction SilentlyContinue))"
+```
+
+- **Not installed, or 2.2.x or older:** say what you found and offer the install or update in
+  *Installing or updating NVIDIA Broadcast* below.
+- **Installed but not running:** ask the user to open NVIDIA Broadcast from the Start menu and leave
+  it running, or offer to start it for them (`references/connection.md`, *Starting Broadcast
+  hidden*, step 3; say so before you do it).
+- **Installed and running, still no tools:** follow step 2 above; name no other cause.
+
+When the user says it is done, search for the tools again with `tool_search` (for example,
+`nvidia broadcast effects`). If they are listed, continue with the original request. If not, repeat
+the soft check and relay Hermes's current sentence; Hermes can take a few minutes to connect after
+Broadcast starts, so say so and offer to check again later. This guidance is an offer, never a
+requirement, and it never replaces Hermes's connection.
+
 ## Installing or updating NVIDIA Broadcast
 
 Only when the version check above found **no executable at the standard path**, or a

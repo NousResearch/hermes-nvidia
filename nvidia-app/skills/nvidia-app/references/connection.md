@@ -13,8 +13,9 @@ The `nvidia-app` plugin declares NVIDIA App's MCP server, and Hermes connects it
 Hermes lists only what is connected and offerable. When the catalog has no `nvapp_` tools:
 
 1. Report the sentence Hermes gives for the server: the unavailable line in the tool catalog or `tool_search` result, which is the same sentence the Plugins tab in Settings shows. It names one user action, such as starting NVIDIA App.
-2. Stop there. Do not connect to a loopback port, do not run the stdio bridge, do not script HTTP requests, do not read `server.json`, and do not search NVIDIA's folders for ports, tokens, or databases. None of these makes the tools appear in this session, and a manual transport bypasses the approvals Hermes applies to these tools.
+2. Stop trying to reach the server there. Do not connect to a loopback port, do not run the stdio bridge, do not script HTTP requests, do not read `server.json`, and do not search NVIDIA's folders for ports, tokens, or databases. None of these makes the tools appear in this session, and a manual transport bypasses the approvals Hermes applies to these tools.
 3. Do not name a cause Hermes did not report. In particular, do not tell the user to change an NVIDIA App setting unless a tool returned `service_disabled` or `overlay_not_available`.
+4. You may then offer first-run setup help: the soft install-and-running check, the download page, and checking again with `tool_search` when the user says it is done. See *First run on a new computer* in `SKILL.md`. Report what that check found; it does not replace Hermes's connection.
 
 ## When a tool call fails
 
