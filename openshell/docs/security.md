@@ -18,10 +18,6 @@ The plugin marks the profile as run elsewhere, and Hermes on this computer refus
 
 ## What the sandbox does not protect against
 
-> [!WARNING]
-> On Windows the sandbox uses Microsoft MXC process containers, and MXC is itself a preview.
-> Treat the Windows sandbox as defense in depth. Do not rely on it as a security boundary.
-
 - **Services on this computer (Windows).** The sandbox reaches every port on the computer's own
   addresses. See [below](#services-on-this-computer-windows).
 - **The profile folder.** The sandbox can write most of it, `config.yaml` included. Hermes on

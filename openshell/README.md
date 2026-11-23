@@ -19,10 +19,6 @@ The plugin is in beta. Its limits and open problems are in [Known issues](docs/k
 | Linux aarch64 | Docker | Built, not yet run on hardware |
 | macOS | | Not supported |
 
-> [!WARNING]
-> On Windows, treat the sandbox as defense in depth. MXC is itself a preview.
-> Do not rely on the Windows sandbox as a security boundary. See [Security](docs/security.md).
-
 ## Requirements
 
 - **Windows:** Windows 11 24H2 or newer with the September 2026 update, and
