@@ -1,0 +1,223 @@
+# Install, update and uninstall
+
+This page takes you from a computer without the plugin to a profile that is ready to switch on,
+and back again.
+
+The `hermes` commands on these pages are the same in PowerShell and in a Linux shell.
+Commands that differ are shown once for each.
+
+## Supported platforms
+
+| Platform | Tested | Notes |
+|---|---|---|
+| Windows 11 x64 | Yes | 24H2, 25H2 or 26H2 with the September 2026 update (build 26100, 26200 or 26300 at `.9550` or later), or 26H1 (build 28000 at `.3086` or later). Windows 10 and Windows Server aren't supported. |
+| Windows 11 on Arm64 | Not yet run on hardware | Same Windows versions. Every Arm64 program must be the Arm64 build. |
+| Linux x86_64 | Yes | Linux 6.2 or newer (Landlock ABI 3), glibc, seccomp user notification, Docker, systemd. Tested on Ubuntu 24.04 in WSL2. |
+| Linux aarch64 | Built, not yet run on hardware | Same as x86_64. |
+| macOS | No | Not supported. |
+
+Finish the setup for your system before you go on:
+
+- [Set up Windows](setup-windows.md)
+- [Set up Linux](setup-linux.md)
+
+## Get a Hermes build with sandbox support
+
+The plugin needs changes in Hermes core and in the desktop app that are still in review.
+Until they are released, install Hermes from the `beta/openshell` branch of hermes-agent.
+That branch is `main` plus those changes.
+
+> [!NOTE]
+> The `beta/openshell` branch is not published yet. Until it is, the commands in this section fail.
+
+### Install Hermes from the branch
+
+Windows (PowerShell):
+
+```powershell
+& ([scriptblock]::Create((irm https://hermes-agent.nousresearch.com/install.ps1))) -Branch beta/openshell -IncludeDesktop
+```
+
+If PowerShell answers `The assignment expression is not valid`, run the installer from a file:
+
+```powershell
+irm https://hermes-agent.nousresearch.com/install.ps1 -OutFile "$env:TEMP\hermes-install.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\hermes-install.ps1" -Branch beta/openshell -IncludeDesktop
+```
+
+Linux:
+
+```bash
+curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --branch beta/openshell --include-desktop
+```
+
+Leave out `--include-desktop` on a machine without a desktop session.
+
+### Move an existing install to the branch
+
+Rerunning the installer keeps an existing checkout on its update channel.
+Move it with Hermes itself, then build the desktop from it:
+
+```bash
+hermes update --branch beta/openshell
+hermes desktop
+```
+
+### Check the build and stay on it
+
+1. Open a new terminal and run `hermes --version`.
+2. Use the desktop that `hermes desktop` (or `-IncludeDesktop`) builds from this install.
+   A Hermes Desktop download from the website or the Microsoft Store doesn't have the sandbox
+   support yet.
+3. When you update, stay on the branch: run `hermes update --branch beta/openshell`.
+
+> [!WARNING]
+> A plain `hermes update`, or the desktop's update prompt, moves Hermes back to the regular release.
+> The regular release can't run the plugin.
+
+What the plugin calls in Hermes is listed in
+[Development](development.md#what-the-plugin-needs-from-hermes).
+
+## Choose a profile
+
+The switch does not turn on for the default profile yet. Use another profile.
+
+A test profile with a working model keeps your own profiles out of the test:
+
+```bash
+hermes profile create sbtest --clone
+hermes -p sbtest -z "say hi"
+```
+
+- `--clone` copies the active profile's model settings and keys.
+- On a new install, set up a model first with `hermes setup`.
+- Hermes needs a model context of at least 64K tokens.
+
+The model can use an API key stored in the profile's `.env`, a provider the profile is signed in
+to, or a model server on this computer.
+[API keys and providers](credentials.md) lists what works in the sandbox.
+
+## Install the plugin
+
+The plugin is on the `feat/openshell` branch of this repository, in the `openshell` folder.
+`--ref` takes a full commit hash, so look up the branch's current commit first.
+Without `--ref`, `hermes plugins install` reads the repository's default branch, which does not
+hold the plugin yet.
+
+Windows (PowerShell):
+
+```powershell
+$ref = (Invoke-RestMethod https://api.github.com/repos/NousResearch/hermes-nvidia/commits/feat/openshell).sha
+hermes -p sbtest plugins install NousResearch/hermes-nvidia/openshell --ref $ref --enable
+```
+
+Linux:
+
+```bash
+ref=$(git ls-remote https://github.com/NousResearch/hermes-nvidia refs/heads/feat/openshell | cut -f1)
+hermes -p sbtest plugins install NousResearch/hermes-nvidia/openshell --ref "$ref" --enable
+```
+
+The plugin has two halves, and both must be on:
+
+1. **The Python half.** `--enable` turns it on for the profile.
+   It adds `openshell` to `plugins.enabled` in the profile's `config.yaml`.
+2. **The desktop half.** Start the desktop (`hermes desktop`) and go to Capabilities > Plugins.
+   Search for `openshell`, open **Sandbox** and turn on **Desktop: Sandbox**.
+   **Sandbox** then appears in the sidebar.
+
+## Check the computer
+
+```bash
+hermes -p sbtest sandbox check
+```
+
+| Field | Meaning |
+|---|---|
+| `"ok": true` | This computer can run the sandbox. Otherwise `"reason"` is the one reason it can't, and `"action"` says what to do about it. |
+| `"ready"` | Whether the switch would turn on for this profile now. |
+| `"switch_refused"` | The reason, when `"ready"` is `false`. The exit status is then 2. |
+
+The other fields and exit statuses are in the [command reference](cli.md#check).
+What each reason means is in [Troubleshooting](troubleshooting.md#the-switch-does-not-turn-on).
+
+On Windows, run the check again after the next step.
+Before `wxc-exec` is installed, the check answers from the Windows version alone.
+See [Set up Windows](setup-windows.md#see-which-files-are-used).
+
+## Install OpenShell
+
+Switching the sandbox on installs the pinned OpenShell build too.
+Running the install here first shows the result, or the error, in the terminal.
+The command prints nothing while it downloads, then one JSON result:
+
+```bash
+hermes -p sbtest sandbox runtime install
+hermes -p sbtest sandbox runtime status
+```
+
+The files are installed in `openshell/runtime/` in the Hermes data folder.
+That folder is `%LOCALAPPDATA%\hermes` on Windows and `~/.hermes` on Linux.
+The plugin checks every file against the hashes pinned in `runtime/pins.json`.
+
+| | Windows | Linux |
+|---|---|---|
+| What is installed | The four OpenShell programs from NVIDIA's signed Windows package for the PC's architecture (a download of about 60 MB from the OpenShell v0.1.9 release on GitHub) | The OpenShell v0.1.9 release for your architecture, its two Docker images, the OpenShell Python SDK, and the sandbox's base image, which is built on your computer (a few minutes the first time) |
+| `runtime status` shows | `openshell-windows-0.1.9` on x64, `openshell-windows-0.1.9-arm64` on Arm64, with `"signer": "NVIDIA Corporation"` and `"signature": "valid"` | `openshell-v0.1.9` |
+
+What the plugin checks before it accepts a file is in
+[Security](security.md#what-is-verified-at-install).
+
+Notes for Windows:
+
+- If you skip this step, the first switch-on downloads about 100 MB in all: OpenShell (about
+  60 MB), Microsoft's MXC package (about 38 MB) and the shell (under 1 MB).
+  The Sandbox page shows only "Starting sandbox…" meanwhile.
+  Running `sandbox runtime install` first moves that wait into the terminal.
+- The same command installs MXC's `wxc-exec` and the sandbox's shell.
+  See [Set up Windows](setup-windows.md#mxc-and-the-sandboxs-shell).
+- The plugin installs the package for the PC's own architecture, also when Hermes runs an
+  emulated x64 Python on an Arm64 PC.
+- The package prints version 0.1.9 but is built from OpenShell's `windows` branch, so it isn't the
+  same code as OpenShell 0.1.9 on Linux.
+- The package needs no Microsoft Visual C++ Redistributable. If you installed one for an earlier
+  beta, you can keep it.
+- To install from a folder that already holds the four programs, use
+  `hermes sandbox runtime install --build-dir <dir>` or set `HERMES_OPENSHELL_BUILD_DIR`.
+  The same checks apply.
+
+OpenShell's own usage telemetry is turned off for every OpenShell program the plugin starts.
+See [Telemetry](security.md#telemetry).
+
+## Update
+
+| What | Command |
+|---|---|
+| Hermes | `hermes update --branch beta/openshell` |
+| The plugin | The install command from [Install the plugin](#install-the-plugin), with `--force` added |
+| OpenShell | Nothing to run. After a plugin update that changes the pinned build, the new build is installed the next time a sandbox starts. |
+
+When the pinned build changes, the plugin restarts the gateway on the new build once no sandbox
+runs on it. Sandboxes that are running keep the build they started with until then.
+
+## Uninstall
+
+1. Switch the sandbox off for every profile that uses it, on the Sandbox page or with
+   `hermes -p <profile> sandbox off`.
+   When the last one is off, the plugin stops the OpenShell gateway too.
+2. Remove the gateway's files and the installed OpenShell:
+
+   ```bash
+   hermes -p sbtest sandbox gateway remove
+   hermes -p sbtest sandbox runtime remove
+   ```
+
+3. Turn off **Desktop: Sandbox** in Capabilities > Plugins.
+4. Remove the plugin: `hermes -p <profile> plugins remove openshell`.
+5. Optional: delete `openshell/<profile>/` in the Hermes data folder. It holds the saved folders,
+   sites and card log. Delete the test profile itself with `hermes profile delete sbtest`.
+6. Windows: remove what [Set up Windows](setup-windows.md#remove-the-windows-prerequisites) lists.
+7. Linux: remove the images if you don't need them. See
+   [Set up Linux](setup-linux.md#remove-the-images).
+8. Leave the beta branch: `hermes update --branch main`.
+   Later updates follow your usual channel again.

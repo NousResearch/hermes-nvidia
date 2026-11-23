@@ -18,7 +18,7 @@ Every file above sits in the launcher's host-only state dir, which the sandbox c
 Rows link to their chat: decisions and file rows carry the chat they came from; a network row is
 attributed to a chat only when exactly one chat had a turn running at that moment.
 
-OCSF mapping for the export (schema 1.8.0, one record per line), documented in docs/ACTIVITY.md:
+OCSF mapping for the export (schema 1.8.0, one record per line), documented in docs/activity-log.md:
 OpenShell records verbatim (network); File System Activity (1001) for file rows; User Access
 Management (3005) for card decisions; Application Lifecycle (6002) for sandbox start and stop.
 """

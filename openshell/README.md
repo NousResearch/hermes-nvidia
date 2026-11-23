@@ -1,124 +1,128 @@
-# openshell
+# OpenShell sandbox plugin for Hermes Agent
 
-The openshell plugin runs a Hermes profile's backend inside an [NVIDIA OpenShell](https://github.com/ai-openshell/openshell) sandbox. A user turns the sandbox on and off per profile from the desktop's Sandbox page. While it is on, the profile's chats, tools and terminal run in the sandbox, and the sandbox reaches only the folders and websites the user allowed.
+The `openshell` plugin runs one Hermes profile's backend inside an
+[NVIDIA OpenShell](https://github.com/ai-openshell/openshell) sandbox.
+You turn the sandbox on and off per profile, from the desktop's Sandbox page or from a terminal.
 
-On the host, a launcher (`hermes sandbox serve`) starts the sandbox and puts an authenticating proxy in front of it on a loopback port. The launcher answers the plugin's own routes and the profile's credential writes on the host, so the sandbox never holds the profile's keys or the proxy's token.
+While it is on, the profile's chats, tools and terminal run in the sandbox.
+The sandbox reaches only the folders and websites you allowed.
 
-## Platforms and requirements
+## Status
 
-| | Windows | Linux |
+The plugin is in beta. Its limits and open problems are in [Known issues](docs/known-issues.md).
+
+| Platform | Isolation | Status |
 |---|---|---|
-| OS | Windows 11 on x64 or Arm64, 24H2 or newer with the September 2026 update (not Windows Server) | x86_64 or aarch64 with glibc, Linux 6.2 or newer (Landlock ABI 3), seccomp user notification |
-| Isolation | MXC process containers through OpenShell's MXC driver. `wxc-exec` (MXC 1.0 or newer, the build for the PC's architecture: `bin/x64` or `bin/arm64` in MXC's package) must report the `base-container` tier, `needsDaclAugmentation: false`, and support for host loopback and denied paths | Docker, through OpenShell's Docker driver. The user must be able to reach the Docker daemon |
-| OpenShell | NVIDIA's signed Windows package from the OpenShell v0.1.9 release, as pinned in `runtime/pins.json` for the PC's architecture (x64 or Arm64) | OpenShell v0.1.9, as pinned in `runtime/pins.json` |
-| Shell inside the sandbox | busybox-w32 (`OPENSHELL_BUSYBOX`, or `busybox64u.exe`, on Arm64 `busybox64a.exe`, on `PATH` or in the plugin's `bin/` folder) | The base image's shell |
+| Windows 11 x64 | Microsoft MXC process containers | Tested |
+| Windows 11 on Arm64 | Microsoft MXC process containers | Not yet run on hardware |
+| Linux x86_64 | Docker | Tested on Ubuntu 24.04 in WSL2 |
+| Linux aarch64 | Docker | Built, not yet run on hardware |
+| macOS | | Not supported |
 
-macOS is not supported.
+> [!WARNING]
+> On Windows, treat the sandbox as defense in depth. MXC is itself a preview.
+> Do not rely on the Windows sandbox as a security boundary. See [Security](docs/security.md).
 
-The plugin installs the pinned OpenShell into `<hermes root>/openshell/runtime/` and checks every file against `runtime/pins.json`:
+## Requirements
 
-- Linux: the v0.1.9 release assets, checked against pinned checksum files, the Docker driver images by digest, and the OpenShell Python SDK (from PyPI, pinned by its own sha256) with its pinned dependencies.
-- Windows: NVIDIA's signed Windows package from the OpenShell v0.1.9 release, one zip for x64 and one for Arm64. The plugin installs the one for the PC's own architecture, also when Hermes runs an emulated x64 Python on an Arm64 PC. It downloads the zip from the release (at `github.com/ai-openshell/openshell`, the repository that was `NVIDIA/OpenShell`), refuses it unless its sha256 matches the pin, and unpacks only the four pinned programs from the zip's `bin` folder; the package's scripts, SDKs and documents are never written to disk. Each file must match its own pinned sha256 and carry a valid signature by NVIDIA Corporation (`windows.signer` in the pin), or the install is refused. If Windows can't check the signatures at all, the install continues on the checksums and logs one line. To install from a folder that already holds the four programs, use `hermes sandbox runtime install --build-dir <dir>` or `HERMES_OPENSHELL_BUILD_DIR`; the same checks apply. NVIDIA built the package from OpenShell's `windows` branch, not from the v0.1.9 tag: it prints 0.1.9 but doesn't hold the changes OpenShell's main branch made in 0.1.6 to 0.1.9. The plugin therefore reads what the Windows build can do from the pin's `features` list, never from the version number. The programs carry the C runtime and Z3 inside them, so the package needs no Microsoft Visual C++ Redistributable. The pin of the package before it (from the v0.1.8 release) is kept in `runtime/pins.json` as `windows_previous`; nothing reads it unless it is put back under the name `windows`.
+- **Windows:** Windows 11 24H2 or newer with the September 2026 update, and
+  [Smart App Control off or in evaluation mode](docs/setup-windows.md#check-smart-app-control).
+  See [Set up Windows](docs/setup-windows.md).
+- **Linux:** x86_64 or aarch64 with glibc, Linux 6.2 or newer, Docker and a systemd user session.
+  See [Set up Linux](docs/setup-linux.md).
+- **Hermes:** a build that has the sandbox support. See
+  [Get a Hermes build](docs/install.md#get-a-hermes-build-with-sandbox-support).
+- **A profile** other than the default one, with a model whose context is at least 64K tokens.
 
-The plugin also needs Hermes core and desktop support for a profile that runs elsewhere: core's run-elsewhere marker (`hermes_cli.profiles_run_elsewhere`), the desktop's per-profile backend override (`host.setProfileBackend` and `host.clearProfileBackend`), and the `access` and `network` kinds on the desktop's approval cards. On Linux, Hermes's web tools and `execute_code` also need core to read `security.fake_ip_ranges` and `terminal.env_passthrough` from the managed scope (see "What the sandbox can reach").
+## Quickstart
 
-## Install and turn it on
+1. Get the Hermes build and finish the setup for your system: [Install](docs/install.md).
+2. Create a test profile, install the plugin and OpenShell for it, and check the computer:
 
-Testing the beta? Follow [docs/BETA.md](docs/BETA.md): prerequisites per OS, installing Hermes from the beta branch, and how to report problems.
+   ```bash
+   hermes profile create sbtest --clone
+   ref=$(git ls-remote https://github.com/NousResearch/hermes-nvidia refs/heads/feat/openshell | cut -f1)
+   hermes -p sbtest plugins install NousResearch/hermes-nvidia/openshell --ref "$ref" --enable
+   hermes -p sbtest sandbox runtime install
+   hermes -p sbtest sandbox check
+   ```
 
+3. Turn the sandbox on, look at it, and turn it off:
+
+   ```bash
+   hermes -p sbtest sandbox on
+   hermes -p sbtest sandbox status
+   hermes -p sbtest sandbox off
+   ```
+
+Step 2 in PowerShell, and the desktop half that the Sandbox page needs, are in
+[Install the plugin](docs/install.md#install-the-plugin). Then follow
+[Use the sandbox](docs/using.md).
+
+## How it works
+
+```mermaid
+flowchart LR
+    desktop["Hermes desktop or CLI"]
+    subgraph host["Your computer"]
+        launcher["Launcher and its proxy"]
+        gateway["Private OpenShell gateway"]
+        osproxy["OpenShell's proxy"]
+        subgraph sandbox["Sandbox (MXC on Windows, Docker on Linux)"]
+            backend["The profile's Hermes backend"]
+        end
+    end
+    sites["Allowed websites and model providers"]
+    desktop -->|"token"| launcher
+    launcher -->|"creates the sandbox through"| gateway
+    gateway -->|"runs"| backend
+    launcher -->|"forwards requests"| backend
+    backend --> osproxy
+    osproxy -->|"adds the real key"| sites
 ```
-hermes plugins install NousResearch/hermes-nvidia/openshell
-```
 
-Enable both halves of the plugin: add `openshell` to `plugins.enabled` in the profile's `config.yaml` for the Python half, and turn the plugin on in the desktop's plugin settings for the desktop half.
+- A launcher (`hermes sandbox serve`) runs on the host as a login service and starts the sandbox.
+- The desktop talks to the launcher's proxy on a loopback port. The proxy checks a token first.
+- Keys and sign-in tokens stay on the host. The sandbox holds placeholders, and OpenShell's proxy
+  puts the real key into a request only when the request goes to the key's own address.
+- A folder or website you did not allow is refused. A refusal during a chat raises a card with
+  **Allow**, **Always allow** and **Deny**.
 
-Open the Sandbox page from the sidebar (or "Open sandbox settings" in the command palette) and flip the switch. Before the switch can turn on, the page checks that the computer meets the requirements above and, if not, says why. Turning it on:
+More in [How it works](docs/how-it-works.md).
 
-1. The desktop asks the user to confirm.
-2. The plugin starts the profile's launcher as a per-user login service (Task Scheduler on Windows, `systemd --user` on Linux), which starts the sandbox.
-3. The plugin marks the profile as run elsewhere, so the host stops running it, and the desktop routes the profile to the launcher.
+## Documentation
 
-Turning it off stops the sandbox, removes the login service and clears the marker; the desktop then routes the profile back to the host. The same switch is available from a terminal: `hermes -p <profile> sandbox on`, `off`, `status` and `check`.
-
-All sandboxed profiles of a Hermes root share one private OpenShell gateway. It listens on loopback only, requires mTLS client certificates generated for it, runs as a login service, and is removed when the last profile is switched off (`hermes sandbox gateway status|remove`).
-
-OpenShell's own usage telemetry is off. OpenShell sends anonymous usage counts (sandbox starts and stops, policy decisions, provider changes; no names, paths, prompts or keys) to NVIDIA unless it is told not to. The plugin always tells it not to: every OpenShell program it starts runs with `OPENSHELL_TELEMETRY_ENABLED=false`, set by the plugin whatever the user's own environment says, and the gateway passes that setting on to each sandbox. To confirm, `hermes sandbox gateway status` shows `"openshell_telemetry": "off"`; the setting is the `OPENSHELL_TELEMETRY_ENABLED` line in `openshell/runtime/gateway/service/gateway-service.json` in the Hermes data folder. A gateway that an earlier version of the plugin left running is restarted with the setting the next time a sandbox is switched on while no other sandbox runs on it.
-
-## What the sandbox can reach
-
-**Folders.** The sandbox gets the profile's own folder (read and write), the installed Hermes runtime (read only), its own scratch folders, and the folders the user adds on the Sandbox page, each read only or read and write. The page refuses a drive root, the user's home folder or a folder above it, the Hermes data folder, and credential folders.
-
-**Credentials.** The profile's credential files (`.env` and the other stores Hermes keeps in a profile folder) stay hidden from the sandbox, whether or not they exist yet. The sign-in files (`auth.json`, `.anthropic_oauth.json`) are hidden the same way unless the profile is signed in to a provider the sandbox can use: then the real file is kept only in the launcher's host-only copy while the sandbox is on, and the sandbox finds a stand-in under the same name that holds no token and no refresh grant (see "Sign-ins" below). How the files are hidden:
-
-- On Windows the launcher lists them as MXC denied paths (`driver_config.mxc.denied_paths`, added in [NVIDIA/OpenShell#5033](https://github.com/NVIDIA/OpenShell/pull/5033)). Every hidden path sits directly under a folder the sandbox cannot rename, and the launcher refuses to start while a credential file exists below a folder the sandbox writes, because renaming that folder would expose it. Copies of the secret-manager caches that earlier Hermes releases kept in `cache` and `runtime` are deleted before the sandbox starts when the installed Hermes keeps them at the top of the profile folder.
-- On Linux the launcher covers each existing credential folder with an empty read-only mount. Credential files at the top of the profile folder are kept, while the sandbox runs, in one folder there (`.openshell-held`) that is covered the same way, with a link under each file's name; `.env` and `.op.env` get the link even when they don't exist yet, and so does `auth.json` unless it holds a stand-in. Hermes's own writers follow the link, so a key saved, a sign-in or a token refresh on this computer lands inside that folder and never under a name the sandbox can read. The files are moved back when the sandbox stops. A store the sandbox creates, or anything it puts where one of those links was, is moved out of the profile.
-
-Keys reach the sandbox as OpenShell provider placeholders. OpenShell's proxy puts the real key into a request only when Hermes's interpreter sends it, only to the key's own address, and only in the place the key travels in there (a bearer token, or a header such as `x-api-key` or `x-goog-api-key`). A key gets a placeholder when the profile has an address for it: the model, the fallback models, an auxiliary model with a provider of its own and the saved endpoints, as they were at switch-on; and every key of a provider Hermes knows, at that provider's own address, so another model of that provider works when you choose it inside. A key of a web search service whose address Hermes itself states (Tavily, Keenable, Perplexity, Brave Search) is a tool's key, not a model's: it gets its placeholder once the tool's category is allowed in a chat (see Cards), and until then its row on the Sandbox page says "Used in the sandbox once Web search is allowed in a chat." Every other key stays on the host. A key you replace on the Keys page while the sandbox is on and no reply is running is used by the next request; a new key, a removed key, or one saved during a reply is used after the sandbox restarts. When you save a key on the Sandbox page while the sandbox is on, the page says which of these happened in one line; a key no model in the profile names is not handed in, and the line says that instead.
-
-**Sign-ins.** A profile that is signed in to Nous Portal, OpenAI Codex, xAI, MiniMax or Anthropic (Hermes's own sign-in) works in the sandbox under the same provider. The sandbox never gets the tokens. When the sandbox is switched on, the launcher takes the profile's sign-in files (`auth.json`, `.anthropic_oauth.json`) into its host-only copy, and that copy is the live sign-in until the switch-off: the launcher renews each sign-in there with Hermes's own code, ahead of its expiry and at a moment no reply is streaming, and hands the current token to OpenShell, which puts it into requests to that provider's addresses. At switch-on those are the addresses the profile's model uses and no others: a Nous Portal sign-in is used at its inference address only, not at the Portal and not at any host of the Nous tool gateway, which Hermes's tools use with the same token. A tool's host is added once its category is allowed in a chat (see Cards). Under the file's name the sandbox finds a stand-in, which a start-up step writes before Hermes starts: the same rows with a placeholder where each token was and no refresh grant. The stand-in is an ordinary file the sandbox can read and write, so for a signed-in profile that one name is not hidden; every other credential file stays hidden as described above. At switch-off the stand-in is thrown away and the copy, with the newest refresh grant, goes back under the file's name, so the profile is still signed in. If the launcher was stopped in between, its next start, the next switch-on or `hermes -p <profile> sandbox off` does the same. A sign-in the provider no longer renews shows on the Sandbox page as expired, with one note in the chat: turn the sandbox off, sign in again, turn it on. Sign in with the sandbox off: a sign-in made for the profile from a terminal while its sandbox is on is not used, and the file it wrote is kept in `openshell/<profile>/quarantine`. A profile that uses the default profile's Nous Portal or Codex sign-in keeps using it, and it is renewed in the default profile's store. A named profile that signed in to Nous Portal on a computer whose default profile is signed in holds the same sign-in as that profile, and Hermes keeps it current through a store all profiles share (`shared/nous_auth.json` in the Hermes data folder): while the sandbox is on, the launcher and Hermes on this computer renew it in turns through that store, each takes the pair the other renewed, and neither signs the other out. Hermes may then fold the profile's own copy into the default profile's sign-in; the profile uses that one from then on, also after the switch-off. For its renewals the launcher writes two files outside its own folder, with Hermes's own code and under Hermes's own locks: that shared store at every Nous Portal renewal, and the default profile's `auth.json` for a sign-in that lives there. `hermes -p <profile> sandbox check` and `sandbox status` list the profile's providers and whether each works in the sandbox. `sandbox check` also says whether the switch would turn on: `"ok"` is about this computer, `"ready"` is about this profile on it, and a switch that would be refused gives `"ready": false` with the reason in `"switch_refused"` and exit status 2 (1 stays a computer that cannot run the sandbox). The switch does not turn on while a key is written in `config.yaml`, which the sandbox reads: it names the key, and `hermes -p <profile> sandbox on --move-keys` moves it to `.env` and leaves `${NAME}` in its place. After the move the key is in `.env` and in no other file: no copy of either file is kept. A move that was stopped between the two files leaves the key in both, the switch stays refused, and the next move finishes it. It does not turn on either while the main model's provider cannot work in a sandbox (one that signs in through its own program, for example) or needs a sign-in first, or while `config.yaml`, an env file or a sign-in file of the profile cannot be read (another program has it open, or `config.yaml` is not valid YAML): a file that cannot be read is never taken for an empty one. A main model whose key is not in `.env` does not hold the switch, because the switch is not what keeps such a model from answering: its row says "The model won't answer in the sandbox without it.", and the confirm before the switch-on and `sandbox on` say the same in one line. The Sandbox page says the same before the switch: its "Providers" section lists the profile's providers, one row each, with what each will do in the sandbox (a key that stays on this computer and where it is used, a sign-in that stays signed in on this computer and where it is used, a sign-in that is needed first, a provider that is not available in the sandbox and why), the switch is greyed, reads "Can't turn on" and shows the reason while one of these holds it, and for a key written in `config.yaml` the bar above the tabs offers **Move to .env**. While a file cannot be read the rows stay as they were last read. The row of a provider that a fallback model uses is marked "Fallback", as the model's is marked "Model". While the sandbox is on the section shows the launcher's rows, and signing in or out on the desktop's Keys page is refused.
-
-The sandbox can write its profile folder, `config.yaml` included, so the launcher does not read keys or their endpoints from there while the sandbox is on. When the sandbox is switched on, the launcher keeps host-only copies of the profile's env files (`.env`, `.op.env`), of its sign-in files (`auth.json`, `.anthropic_oauth.json`), of its secret sources (the `secrets:` block of `config.yaml`) and of its models' endpoints, in `openshell/<profile>/pins` in the Hermes data folder, and uses those until the sandbox is switched off. The keys the Sandbox page and the desktop's Keys page list and reveal are the ones in that copy. A key is handed out for an endpoint only when that pair was configured at switch-on, when it is the key's own provider's registered address, or when you allowed it: if a model's endpoint or key name is changed from inside the sandbox, the key is withheld and the Sandbox page shows "Model endpoint changed in the sandbox. Key withheld." with **Allow** and **Dismiss**. Keys you save on the Sandbox page or the desktop's Keys page go through the launcher and update the copies. A `.env` edited by hand while the sandbox is on is not picked up, and an env file that differs from its copy is put back as it was at switch-on before every sandbox start, before the keys are listed and at switch-off (the other version is kept in `openshell/<profile>/quarantine`); switch the sandbox off before you edit `.env` by hand. The sign-in files (`auth.json`, `.anthropic_oauth.json`) are handled the same way on both systems: the launcher's copy is the sign-in while the sandbox is on. It is renewed there and goes back under the file's name at switch-off; what the sandbox wrote into a stand-in is thrown away, and a file that a `hermes` command you ran for that profile wrote under one of those names meanwhile is moved to the quarantine folder, so sign in with the sandbox off. A sandbox that an earlier version of the plugin switched on has no copies: keys for custom endpoints are withheld, and the page asks you to turn it off and on once.
-
-Once the sandbox is off, Hermes on this computer runs what the profile folder holds again: its cron jobs and their scripts, MCP servers, shell hooks, secret sources and model endpoints. The sandbox could write most of that folder, so the launcher records those settings and files when the sandbox is switched on (in `openshell/<profile>/handback` in the Hermes data folder, which no sandbox is given) and compares before it switches off. With no such change the sandbox turns off as before. Otherwise the Sandbox page lists the changes under "Changed in the sandbox" with two buttons: **Revert and turn off** puts every listed change back as it was at switch-on and keeps the sandbox's versions in `openshell/<profile>/handback/held`; **Keep and turn off** leaves them as they are. From a terminal, `hermes -p <profile> sandbox off` prints the list, changes nothing and exits with status 3 until you run it with `--revert` or `--keep`; `hermes -p <profile> sandbox handback` prints the list at any time. A model or an MCP server you changed yourself in the app while the sandbox was on is listed too (the sandboxed backend wrote it): keep it. Changed skills, memories and `SOUL.md` are counted but not reverted. Env files and `auth.json` are always put back from their copies. If the comparison cannot run, the sandbox still turns off and the page says that the changes were not reviewed. Only what the sandbox can write is compared: the profile's `plugins` and `desktop-plugins` folders are read-only inside the sandbox, so a plugin you update while it is on, and the bytecode Python writes beside a plugin's files, are never listed (bytecode in a folder the sandbox can write, such as `scripts/__pycache__`, is). What you keep runs on this computer from then on like your own settings, and a kept secret source is what the next sandbox's keys are read with: while kept changes are still in the profile the Sandbox page shows one line, "Kept from the sandbox: N items", with **Show**, and `hermes -p <profile> sandbox status` prints the same line (`sandbox handback` lists them). The line goes when you change or remove the kept entries.
-
-A sandbox session that ended without that step (its launcher was stopped and the profile freed by hand, or the comparison could not run) is reviewed before the sandbox is switched on again, so that nothing it left behind is taken for your own settings: the Sandbox page shows the same list with **Revert and turn on** and **Keep and turn on**, and `hermes -p <profile> sandbox on` prints it and exits with status 3 until you run it with `--revert` or `--keep`. `hermes -p <profile> sandbox off --revert` (or `--keep`) answers the list without switching on. A foreground `hermes sandbox serve` (the only way to sandbox the default profile) is compared too: it records the folder when it starts, prints the list when it stops, and `sandbox off --revert` or `--keep` answers it; its next start asks first. That path does not mark the profile, so Hermes on this computer reads the folder while such a sandbox runs. The first time a profile is switched on there is nothing to compare with, and the folder is recorded as it is; that also holds for a profile whose earlier sandbox sessions ran on a version of the plugin without this step, so look through `secrets`, `mcp_servers`, `hooks`, `quick_commands` and the cron jobs of such a profile once.
-
-**Websites.** Network access is blocked by default. The user allows destinations on the Sandbox page by hostname or by address range (CIDR) and port; the OpenShell drivers have no "all internet" rule. On Windows, MXC lets the sandbox reach every port on the computer's own addresses, loopback included, so services on the computer are always reachable from the sandbox and must authenticate their callers. The page says so. OpenShell's proxy refuses loopback addresses, so inside a Windows sandbox the plugin lists `127.0.0.1`, `localhost` and `::1` in `NO_PROXY`: programs that follow the proxy variables (curl, Python, Node) connect to those three names directly, as a program that opens its own socket already could. Every other destination still goes through the proxy and the allowed destinations.
-
-**Usage data shared with Nous.** While the profile shares its usage data (`telemetry.shared_metrics.enabled` and `send` both on in its `config.yaml`: the answer to Hermes's "Help improve Hermes?" question, changed with `hermes setup telemetry`), the launcher keeps one destination open by itself: `telemetry.nousresearch.com` on port 443, for Hermes's interpreter, like the destinations on the page. The Sandbox page lists it among the allowed destinations with its reason. It is not one of the user's destinations or card grants: it cannot be removed there, edits and card answers leave it in place, and it goes when sharing is turned off. It is open for Hermes's interpreter only: another program the agent runs (for example `curl`) is still refused for that host and raises the usual website card. The launcher decides when the sandbox starts and at every network update, and picks up an answer given while the sandbox runs a few seconds later, once no turn is running. The host is fixed in the plugin. The `endpoint` key in `config.yaml` is never opened, and a profile whose config names another endpoint sends no usage data from inside the sandbox. Known limit: a sandboxed agent can edit its own profile's `config.yaml` and so turn sharing on, which opens this one host and nothing else.
-
-**Linux: web tools and `execute_code`.** Inside a Linux sandbox OpenShell's policy DNS answers every name with an address from 198.18.0.0/15, and its proxy presents OpenShell's certificate authority, which the sandbox's CA variables (`SSL_CERT_FILE` and the like) point to. On every start the launcher writes both into the managed scope it gives the sandboxed Hermes, keeping the entries of the profile's `config.yaml` and of the host's managed scope: the block as a `security.fake_ip_ranges` entry, so Hermes's SSRF check lets the fetch through to the proxy (which still refuses private destinations), and the CA variables as `terminal.env_passthrough` entries, so Python run by `execute_code` trusts the sites the user allowed. Hermes versions that read these two settings from `config.yaml` only ignore the managed values without an error; with them, Hermes's web tools (web extract, for example) refuse every site as a private address and `execute_code` rejects allowed sites' certificates, while programs run from the terminal, such as curl, are not affected.
-
-**Windows: curl and git.** Inside a Windows sandbox, Windows cannot reach the revocation servers (OCSP and CRL) of certificate authorities, and a program that leaves certificate checks to Windows (Schannel) can then fail on a site the user allowed. For Windows' own `curl.exe`, the launcher writes a config file with the one option `ssl-revoke-best-effort` into its state folder on every start and points `CURL_HOME` at it; the sandbox can read the file but not change it. curl still validates the certificate chain and the host name, and still refuses a certificate known to be revoked; it only continues when the revocation server cannot be reached. git is switched to its OpenSSL backend (`http.sslBackend=openssl`), which verifies against the sandbox's CA bundle. A `CURL_HOME` or `http.sslBackend` the sandbox's environment already carries is left as it is.
-
-## Cards
-
-When the sandbox refuses a folder or a website during a chat, the plugin raises one card in that chat:
-
-- **Allow** grants it until the sandbox is switched off. It is not saved.
-- **Always allow** saves it to the sandbox's stored policy.
-- **Deny** refuses it; the user can give a reason, which the agent sees.
-
-A network card covers one host on http and https for any program in the sandbox. A folder card asks for the nearest existing folder, read only or read and write.
-
-**Tools.** At switch-on the sandbox opens what the profile's model needs and nothing a tool needs. The first time a tool of a category is used, one card asks for the category: Web search, Web extract, Browser, Image generation, Video generation, Speech, Connected apps or Remote terminal. Its Allow covers every service the category's tools use for this profile, and the card names each host: the services Hermes's web tools use without a key (https, any program in the sandbox); the Nous tool gateway's host for the category, where the profile is signed in to Nous Portal; and a web search service's own host, where the profile holds its key. The approval is for the category, so it keeps working when the profile's settings send the tool to another of these services. A service that fetches pages for the tool lets it read any public page, not one site: the card for Web extract and for Browser says so, and so does the grant's row. Where the Allow binds a sign-in or a key to a host, the sandbox restarts as it does for a folder, because a credential reaches a new address only in a sandbox that starts with it, and the chat continues by itself; removing such a grant restarts the sandbox the same way. An Allow that only opens services used without a key loads into the running sandbox like a website's. A host of the tool gateway that no category's tools ask for stays closed, and no card opens another category's hosts.
-
-The agent waits for the answer. The refused tool call is held until the user answers, for two minutes at most. A program that failed without printing a refusal (`curl -s`) is held the same way once OpenShell's own record confirms that a site it named was refused; a host name alone never raises a card. A command that did not fail although a program in it was refused (`curl -s` piped into `head`, or `curl` followed by `echo`) is judged by OpenShell's record, not by what it printed: the launcher follows OpenShell's records as they happen, so a command that names a site waits a fraction of a second for one after it returns (two seconds at most when its output shows a refusal) and is held on the card when the record shows that site refused during the command. A command that names no site is never made to wait. When a refusal shows in no result this way (the record comes later, or the command names no site), the card comes from OpenShell's record a moment later and the launcher pauses the reply instead, for 90 seconds at most. If nobody answers in that time, the agent says what it needs and stops; an answer given later continues the reply.
-
-The answer applies to the running turn. A website rule loads into the running sandbox. On builds whose policy reload closes open connections (the pinned builds), the launcher first stops the turn at the refused tool call, then loads the rule, and the chat continues by itself. A folder needs a restart, and so does a tool category that uses a sign-in or a key, which the launcher does as soon as the turn has stopped; the chat then continues by itself too, whichever page of the window is open and whether or not the window has focus: a window that shows another page does not resume the chat after the restart, so the launcher resumes it on that window's connection and continues it there. With no window connected for two minutes the reply cannot go on. The chat then says so when it is next opened ("This reply stopped when the sandbox restarted. Send your message again."), the note for the agent goes with that message, and the approval stands, so sending the request again raises no second card. While the launcher holds the turn, the desktop shows the reply as continuing and keeps a message the user sends meanwhile until the continuation has run (on a Hermes core whose `session.interrupt` takes `resume`; on an older core the reply shows "Response stopped" until it continues). The Sandbox page lists what was allowed from cards under "Allowed from chat", each with Remove. What was saved with "Always allow", a tool category included, applies whenever the sandbox is on, so it is listed and can be removed while the sandbox is off too; nothing restarts then. Every address a sign-in or a key is used at in the running sandbox is listed among the page's allowed destinations with what it is for ("Model", or the tool category that opened it) and counted in the page's header, and on the Activity tab a request to such an address carries the same word. A model's address that is listed there has no second row above the list. The open page follows what the launcher changes by itself (a card answered in a chat, a removal, a restart, a sign-in renewed) within a few seconds, also in a window that is covered, minimized or without focus.
-
-## Activity
-
-The Sandbox page's Activity tab is one timeline of what the sandbox allowed and refused: network connections and requests from OpenShell's audit log, refused file accesses from the agent's tool results, and answers to cards. It has filters, the policy history with Restore, and an export of the rows shown as OCSF JSON Lines. The audit log is kept on the host, so it stays readable after the sandbox stops. Sources, routes and the OCSF mapping are in [docs/ACTIVITY.md](docs/ACTIVITY.md).
-
-## Known limits
-
-- **A sandbox whose launcher has stopped.** If the launcher stops by itself, the profile stays switched on for the sandbox, and Hermes does not run it on this computer either. The Sandbox page says that the sandbox isn't answering; it cannot turn such a sandbox off. Run `hermes -p <profile> sandbox off` in a terminal, then press **Switch back** on the page.
-- **Keys set from a terminal.** A key set with `hermes config set` for a profile whose sandbox is on does not stay: the launcher puts the profile's `.env` back as it was and keeps the changed file in `openshell/<profile>/quarantine`, and the command itself reports success. Save keys on the Sandbox page or the desktop's Keys page, or switch the sandbox off first.
-- **Linux: a credential file replaced by hand.** A program that renames a new file over `.env`, `.op.env`, `auth.json` (when it is not a stand-in) or another credential file at the top of the profile folder (an editor that saves by rename, `mv`) puts a plain file where the launcher's link was. The sandbox can read that file until the launcher looks again, which it does four times a second; then it is moved to the quarantine folder and the link is put back. Hermes's own writers are not affected. Switch the sandbox off before you edit or replace a credential file by hand.
-- **Linux: a credential store that first appears while the sandbox runs.** `.env`, `.op.env` and, for a profile without a sign-in the sandbox can use, `auth.json` are hidden even when they don't exist at the start. Any other credential store that does not exist when the sandbox starts and is created on this computer while it runs can be read inside until the sandbox stops, and is then moved to the quarantine folder. Create such a file with the sandbox off.
-- **A reply that is streaming when a sign-in must be renewed.** OpenShell closes the sandbox's open connections whenever a credential's value is replaced. The launcher renews between replies. When replies stream from the moment a renewal is due until shortly before the token expires, the value is replaced anyway: the reply that is streaming is cut and Hermes asks the model again by itself. The chat stays connected and shows no error; the text that had arrived can stay in the reply, followed by the new answer. Replacing one sign-in's value cuts whatever streams, whichever sign-in it is, and Hermes asks the model again three times at most for one reply. So when one value has to go in under a streaming reply, the launcher renews every other sign-in that is due first and then hands their values over together: the reply starts again twice at most, however many sign-ins are due. This is what OpenShell does on Linux. In the one run on Windows, a value replaced under a streaming reply did not cut it.
-- **A sign-in that the provider no longer renews.** When the provider refuses to renew a sign-in, the launcher does not ask again. The Sandbox page shows "Sign-in expired" for that provider with what to do, a notice with the same sentence comes up once in the window, whichever page is open, and the agent gets a note with the chat's next message. The token the sandbox last got is left in place until the sandbox starts again. A sandbox that restarts after that (a folder or a tool approval, or its removal, restarts it) starts without that sign-in: the models on the profile's other sign-ins and keys keep answering, and Hermes in the sandbox reads as not signed in to that provider. The same holds for a sign-in whose token ran out before it could be renewed; once it is renewed, the page asks for a restart, which hands it in again. What a message shows once the provider no longer accepts that token is Hermes's own: in the run on Linux the reply failed with Hermes's text for a rejected sign-in, which names a sign-in command (it needs the sandbox off); in the run on Windows the chat showed "Provider temporarily unavailable" and retried for several minutes. Turn the sandbox off, sign in again, turn it on. A sign-in that is shared with the default profile is one sign-in: it is signed out for that profile too.
-- **A provider that answers a renewal with a token that does not last.** How often the launcher asks a provider to renew a sign-in does not rest on what the token says. Two renewals of one sign-in are at least 25 seconds apart. When a provider keeps answering with a token that is already expired, lasts a few seconds or is the one it was to replace (a fault at the provider, or this computer's clock far ahead of the provider's), the launcher waits twice as long after each such answer, up to ten minutes; the Sandbox page says that the sign-in could not be renewed in time, and the first token that lasts ends it. A sign-in whose renewal was tried 150 times within an hour is left alone until the sandbox is turned off and on: the page shows "Sign-in expired" for it, while the sign-in itself is kept and goes back to the profile at switch-off. A token that OpenShell does not take is offered again with the same restraint, and renewing it is not tried a second time.
-- **Providers that are not available in the sandbox.** A provider that is a program with its own sign-in; Qwen OAuth, which keeps its sign-in outside the profile; Anthropic through Claude Code's sign-in; Azure with Entra ID, Vertex and Bedrock, which sign in through a cloud SDK on this computer. The Sandbox page names each one before the switch, and the switch stays off while the profile's model uses one. A fallback or auxiliary model on such a provider does not hold the switch; its row says that it is not available. Use a provider with an API key or one of the sign-ins listed under "Sign-ins", or run the profile without the sandbox.
-- **Keys that stay on this computer.** Keys for image, video, speech and browser tools, tokens of MCP servers and keys of memory providers are not handed to the sandbox. Those tools report a missing key there.
-- **Sign-ins: what has been run.** Nous Portal and OpenAI Codex have been run in a sandbox on Linux. On Windows a Nous Portal sign-in has been run against a stand-in issuer, with a model entry that names the sign-in's token; Hermes's own Nous Portal route has not been run in a Windows sandbox yet. xAI, MiniMax and Hermes's own Anthropic sign-in are covered by the test suite against stand-in issuers only.
-- **Nous Portal on an inference address of your own.** For a Nous Portal model, Hermes inside the sandbox asks Nous's own inference address. An address set with `NOUS_INFERENCE_BASE_URL` in the profile's `.env` is used on this computer and is not handed in, so such a profile's Nous Portal model does not answer in the sandbox.
-- **Windows: names and sizes.** A hidden credential file cannot be opened inside the sandbox, but its name and size can be seen there.
-- **Windows: a profile with a `.op.env`.** The sandbox does not start: the switch goes back to off and the page does not say why. This needs a fix in Hermes itself (NousResearch/hermes-agent#157036). Until it is in your Hermes, move `.op.env` out of the profile folder before you turn the sandbox on.
-- **Large files in the review.** The launcher keeps a copy of each script, hook file and named program for "Revert" only up to 8 MB a file and 128 MB in all. A larger file that the sandbox changed is listed as "No copy kept"; Revert leaves it as the sandbox changed it and names it. Look at such a file before it runs.
+| Page | What it is for |
+|---|---|
+| [Install](docs/install.md) | Get the Hermes build, install the plugin, check, update, uninstall |
+| [Set up Windows](docs/setup-windows.md) | Windows version, Smart App Control, MXC and the sandbox's shell |
+| [Set up Linux](docs/setup-linux.md) | Kernel, Docker and the systemd user session |
+| [Use the sandbox](docs/using.md) | Turn it on and off, add folders, allow websites |
+| [Approval cards](docs/cards.md) | Answer the sandbox's questions in a chat |
+| [Review changes at switch-off](docs/switching-off.md) | What the sandbox changed, Revert and Keep |
+| [API keys and providers](docs/credentials.md) | Which keys and providers work, what keeps the switch off |
+| [Provider sign-ins](docs/sign-ins.md) | How a signed-in provider works in the sandbox |
+| [Sign-in renewal](docs/sign-in-renewal.md) | How sign-ins are renewed, and what happens when one ends |
+| [Programs inside the sandbox](docs/inside-the-sandbox.md) | What differs for curl, git, Python and the shell |
+| [Activity log](docs/activity-log.md) | The Activity tab, its sources and the OCSF export |
+| [Command reference](docs/cli.md) | Every `hermes sandbox` command, flag and exit status |
+| [How it works](docs/how-it-works.md) | Launcher, gateway, drivers, proxy and host-only state |
+| [Security](docs/security.md) | What the sandbox protects, what it does not, telemetry |
+| [Troubleshooting](docs/troubleshooting.md) | Refusals, logs, reporting a problem |
+| [Known issues](docs/known-issues.md) | Limits and open problems in this beta |
+| [Beta testing](docs/beta-testing.md) | What testers should try and how to report |
+| [Development](docs/development.md) | Code layout, tests, changing a pin |
 
 ## Tests
 
 Run the suite from the repository root with the Python environment of a Hermes checkout:
 
-```
-PYTHONPATH="<hermes checkout><path separator><this repo>" <hermes python> -m pytest openshell/tests -q -p no:cacheprovider
+```bash
+PYTHONPATH="<hermes checkout>:<this repository>" <hermes python> -m pytest openshell/tests -q -p no:cacheprovider
 ```
 
-`tests/conftest.py` points `HERMES_HOME` at a temporary folder before any test imports Hermes, and refuses to run if Hermes still resolves to another root, so the tests never touch the user's own profiles. The tests fake OpenShell, MXC, Docker and the operating system's service managers. A few run against real tools when they are present and skip otherwise:
+On Windows the path separator is `;`. See [Development](docs/development.md#run-the-tests).
 
-- `OPENSHELL_BUSYBOX` (or busybox-w32 on `PATH`) on Windows: the busybox terminal backend.
-- `OPENSHELL_WXC_EXEC_PATH` on Windows: the launcher's MXC check (`--probe` and a `--dry-run`, no container) against a real `wxc-exec`.
-- `curl.exe` in `System32` on Windows: curl reads the config file the launcher writes (a local file, no network).
-- `node` on `PATH`: the Sandbox page's switch logic in `tests/js/switch_harness.mjs`.
+## License
+
+MIT, as [`plugin.yaml`](plugin.yaml) declares.

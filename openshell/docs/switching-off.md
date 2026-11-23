@@ -1,0 +1,124 @@
+# Review changes at switch-off
+
+This page explains the list "Changed in the sandbox" that can appear when you turn the sandbox
+off, and how to answer it.
+
+## Why there is a review
+
+The sandbox can write most of its profile folder.
+Once the sandbox is off, Hermes on this computer runs what that folder holds again:
+
+- cron jobs and their scripts;
+- MCP servers;
+- shell hooks;
+- secret sources;
+- model endpoints.
+
+So the launcher records those settings and files when the sandbox is switched on.
+It keeps the record in `openshell/<profile>/handback` in the Hermes data folder, which no sandbox
+is given. Before it switches off, it compares the profile folder with the record.
+
+With no such change, the sandbox turns off as before.
+
+## Answer the list
+
+### On the Sandbox page
+
+The page lists the changes under "Changed in the sandbox" with two buttons:
+
+| Button | What it does |
+|---|---|
+| **Revert and turn off** | Puts every listed change back as it was at switch-on. The sandbox's versions are kept in `openshell/<profile>/handback/held`. |
+| **Keep and turn off** | Leaves the changes as they are. |
+
+While the list has no answer, the switch itself does not turn the sandbox off.
+The page says "Changes need an answer first."
+
+### In a terminal
+
+```bash
+hermes -p sbtest sandbox off
+hermes -p sbtest sandbox off --revert
+hermes -p sbtest sandbox off --keep
+hermes -p sbtest sandbox handback
+```
+
+- `sandbox off` prints the list, changes nothing and exits with status 3 until you run it with
+  `--revert` or `--keep`.
+- `sandbox handback` prints the list at any time.
+
+## What the review covers
+
+| What changed | How the list shows it | What Revert does |
+|---|---|---|
+| Cron jobs, scripts, MCP servers, shell hooks, secret sources, model endpoints | One row each | Puts each back as it was at switch-on |
+| Skills, memories and `SOUL.md` | A count ("Also changed: ...") | Nothing. They are counted but not reverted. |
+| Env files and `auth.json` | Under "Always reverted" | They are always put back from the launcher's copies, whatever you answer |
+
+A model or an MCP server you changed yourself in the app while the sandbox was on is listed too,
+because the sandboxed backend wrote it. Keep it.
+
+Only what the sandbox can write is compared:
+
+- The `plugins` and `desktop-plugins` folders are read-only inside the sandbox. A plugin you
+  update while the sandbox is on, and the bytecode Python writes beside a plugin's files, are
+  therefore never listed.
+- Bytecode in a folder the sandbox can write, such as `scripts/__pycache__`, is listed.
+
+If the comparison cannot run, the sandbox still turns off, and the page says that the changes
+were not reviewed.
+
+## After a Keep
+
+What you keep runs on this computer from then on like your own settings.
+A kept secret source is what the next sandbox's keys are read with.
+
+While kept changes are still in the profile:
+
+- the Sandbox page shows one line, "Kept from the sandbox: N items", with **Show**;
+- `hermes -p <profile> sandbox status` prints the same line;
+- `hermes -p <profile> sandbox handback` lists them.
+
+The line disappears when you change or remove the kept entries.
+
+## A session that ended without a review
+
+A sandbox session can end without the review: its launcher was stopped and the profile freed by
+hand, or the comparison could not run.
+Such a session is reviewed before the sandbox is switched on again, so that nothing it left behind
+is taken for your own settings.
+
+- The Sandbox page shows the same list with **Revert and turn on** and **Keep and turn on**.
+- `hermes -p <profile> sandbox on` prints the list and exits with status 3 until you run it with
+  `--revert` or `--keep`.
+- `hermes -p <profile> sandbox off --revert` (or `--keep`) answers the list without switching on.
+
+### A foreground `hermes sandbox serve`
+
+A foreground `hermes sandbox serve` is the only way to sandbox the default profile.
+It is compared too:
+
+1. It records the folder when it starts.
+2. It prints the list when it stops.
+3. `sandbox off --revert` or `sandbox off --keep` answers the list. Its next start asks first.
+
+> [!NOTE]
+> A foreground `serve` does not mark the profile.
+> Hermes on this computer reads the profile folder while such a sandbox runs.
+
+### The first switch-on
+
+The first time a profile is switched on there is nothing to compare with.
+The launcher records the folder as it is.
+
+The same holds for a profile whose earlier sandbox sessions ran on a version of the plugin
+without this review.
+Look through `secrets`, `mcp_servers`, `hooks`, `quick_commands` and the cron jobs of such a
+profile once.
+
+## Limits
+
+- The launcher keeps a copy of each script, hook file and named program for Revert only up to
+  8 MB a file and 128 MB in all.
+- A larger file that the sandbox changed is listed as "No copy kept".
+  Revert leaves it as the sandbox changed it and names it. Look at such a file before it runs.

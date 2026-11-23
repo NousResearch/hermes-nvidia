@@ -2326,7 +2326,7 @@ function KeyDialog({ dialog, onClose, send }) {
 // One live timeline of what the sandbox allowed and refused (launcher/activity.py): OpenShell's audit
 // (network), refused file accesses and file writes from the agent's tool results (files), and the
 // answers to access cards (decisions), newest first. Policy history with Restore where the driver keeps
-// revisions. Export saves the rows shown as OCSF JSON Lines (mapping: docs/ACTIVITY.md).
+// revisions. Export saves the rows shown as OCSF JSON Lines (mapping: docs/activity-log.md).
 
 const ACTIVITY_POLL_MS = 3000
 const REVISIONS_POLL_MS = 5000
