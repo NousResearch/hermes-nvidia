@@ -90,8 +90,7 @@ Facts about the Windows package that the pin records:
   from the version number.
 - The programs carry the C runtime and Z3 inside them, so the package needs no Microsoft Visual
   C++ Redistributable.
-- The release is at `github.com/ai-openshell/openshell`, the repository that was
-  `NVIDIA/OpenShell`.
+- The release is at `github.com/ai-openshell/openshell`.
 
 When a pin's version changes, update the versions these pages name: [Install](install.md),
 [Set up Windows](setup-windows.md) and this page.

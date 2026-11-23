@@ -169,8 +169,4 @@ Hermes data folder, and uses the copies until the sandbox is switched off:
 | The secret sources | The `secrets:` block of `config.yaml` |
 | The models' endpoints | `config.yaml` |
 
-A sandbox that an earlier version of the plugin switched on has no copies.
-Keys for custom endpoints are then withheld, and the page asks you to turn the sandbox off and on
-once.
-
 Limits that concern keys are listed in [Known issues](known-issues.md#keys-and-providers).

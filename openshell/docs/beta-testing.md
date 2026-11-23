@@ -9,7 +9,7 @@ what to try, and how to report what you find.
    [Set up Windows](setup-windows.md) or [Set up Linux](setup-linux.md).
 2. Install Hermes from the beta branch:
    [Get a Hermes build with sandbox support](install.md#get-a-hermes-build-with-sandbox-support).
-3. Create the test profile and install the plugin: [Install](install.md#choose-a-profile).
+3. Create a profile and install the plugin: [Install](install.md#choose-a-profile).
 4. Check the computer and install OpenShell: [Install](install.md#check-the-computer).
 
 ## What to try
@@ -25,9 +25,6 @@ what to try, and how to report what you find.
 | Let the agent change a setting in the profile, then turn the sandbox off and answer the review | [Review changes at switch-off](switching-off.md) |
 | Look at the **Activity** tab and export it | [Activity log](activity-log.md) |
 | Sign out of Windows or Linux and back in: the sandbox starts again | [Use the sandbox](using.md#turn-the-sandbox-on) |
-
-Reports from Windows on Arm64 and from Linux aarch64 are especially welcome: neither has been run
-on real hardware yet.
 
 ## Report a problem
 

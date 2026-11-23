@@ -31,13 +31,6 @@ It keeps the entries of the profile's `config.yaml` and of the host's managed sc
 | `security.fake_ip_ranges` | The address block | Hermes's SSRF check lets the fetch through to the proxy, which still refuses private destinations |
 | `terminal.env_passthrough` | The CA variables | Python run by `execute_code` trusts the sites you allowed |
 
-Hermes versions that read these two settings from `config.yaml` only ignore the managed values
-without an error. With such a version:
-
-- Hermes's web tools (web extract, for example) refuse every site as a private address;
-- `execute_code` rejects allowed sites' certificates;
-- programs run from the terminal, such as curl, are not affected.
-
 ## Windows: curl and git
 
 Inside a Windows sandbox, Windows cannot reach the revocation servers (OCSP and CRL) of

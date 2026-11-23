@@ -18,7 +18,7 @@ So the launcher records those settings and files when the sandbox is switched on
 It keeps the record in `openshell/<profile>/handback` in the Hermes data folder, which no sandbox
 is given. Before it switches off, it compares the profile folder with the record.
 
-With no such change, the sandbox turns off as before.
+With no such change, no list appears and the sandbox turns off.
 
 ## Answer the list
 
@@ -110,11 +110,6 @@ It is compared too:
 
 The first time a profile is switched on there is nothing to compare with.
 The launcher records the folder as it is.
-
-The same holds for a profile whose earlier sandbox sessions ran on a version of the plugin
-without this review.
-Look through `secrets`, `mcp_servers`, `hooks`, `quick_commands` and the cron jobs of such a
-profile once.
 
 ## Limits
 

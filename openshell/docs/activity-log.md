@@ -91,8 +91,8 @@ The timeline shows one row, and the export keeps both records.
 The export answers `{records, count, filename, truncated, format: "ocsf-jsonl", ocsf_version}`.
 The page writes one record per line.
 
-Policy history uses the existing `policy/revisions`, `policy/revisions/<n>` and `policy/rollback`
-routes. They answer for a running sandbox only.
+Policy history uses the `policy/revisions`, `policy/revisions/<n>` and `policy/rollback` routes.
+They answer for a running sandbox only.
 Restore brings back the revision's network rules. Folders are fixed at start.
 
 ## OCSF mapping (schema 1.8.0)

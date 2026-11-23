@@ -21,9 +21,8 @@ The plugin is in beta. Its limits and open problems are in [Known issues](docs/k
 
 ## Requirements
 
-- **Windows:** Windows 11 24H2 or newer with the September 2026 update, and
-  [Smart App Control off or in evaluation mode](docs/setup-windows.md#check-smart-app-control).
-  See [Set up Windows](docs/setup-windows.md).
+- **Windows:** Windows 11 24H2 or newer with the September 2026 update. See
+  [Set up Windows](docs/setup-windows.md).
 - **Linux:** x86_64 or aarch64 with glibc, Linux 6.2 or newer, Docker and a systemd user session.
   See [Set up Linux](docs/setup-linux.md).
 - **Hermes:** a build that has the sandbox support. See
@@ -33,7 +32,7 @@ The plugin is in beta. Its limits and open problems are in [Known issues](docs/k
 ## Quickstart
 
 1. Get the Hermes build and finish the setup for your system: [Install](docs/install.md).
-2. Create a test profile, install the plugin and OpenShell for it, and check the computer:
+2. Create a profile, install the plugin and OpenShell for it, and check the computer:
 
    ```bash
    hermes profile create sbtest --clone
@@ -91,7 +90,7 @@ More in [How it works](docs/how-it-works.md).
 | Page | What it is for |
 |---|---|
 | [Install](docs/install.md) | Get the Hermes build, install the plugin, check, update, uninstall |
-| [Set up Windows](docs/setup-windows.md) | Windows version, Smart App Control, MXC and the sandbox's shell |
+| [Set up Windows](docs/setup-windows.md) | Windows version, MXC and the sandbox's shell |
 | [Set up Linux](docs/setup-linux.md) | Kernel, Docker and the systemd user session |
 | [Use the sandbox](docs/using.md) | Turn it on and off, add folders, allow websites |
 | [Approval cards](docs/cards.md) | Answer the sandbox's questions in a chat |

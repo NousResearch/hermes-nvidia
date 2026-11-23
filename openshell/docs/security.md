@@ -125,9 +125,6 @@ Look for `"openshell_telemetry": "off"`.
 The setting is the `OPENSHELL_TELEMETRY_ENABLED` line in
 `openshell/runtime/gateway/service/gateway-service.json` in the Hermes data folder.
 
-A gateway that an earlier version of the plugin left running is restarted with the setting the
-next time a sandbox is switched on while no other sandbox runs on it.
-
 ### Usage data shared with Nous
 
 A profile shares usage data with Nous while `telemetry.shared_metrics.enabled` and `send` are both

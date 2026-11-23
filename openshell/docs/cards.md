@@ -95,8 +95,6 @@ What you see meanwhile:
 
 - While the launcher holds the turn, the desktop shows the reply as continuing.
   A message you send meanwhile is kept until the continuation has run.
-  This needs a Hermes core whose `session.interrupt` takes `resume`.
-  On an older core the reply shows "Response stopped" until it continues.
 - The chat continues whichever page of the window is open, and whether or not the window has
   focus. The launcher resumes the chat on that window's connection.
 - With no window connected for two minutes, the reply cannot go on.

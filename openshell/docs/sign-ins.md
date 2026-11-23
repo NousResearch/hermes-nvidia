@@ -5,14 +5,16 @@ happens to the sign-in while the sandbox is on.
 
 ## Which sign-ins work
 
-A profile that is signed in to one of these providers works in the sandbox under the same
+A profile that is signed in to one of these providers runs in the sandbox under the same
 provider:
 
-- Nous Portal
-- OpenAI Codex
-- xAI
-- MiniMax
-- Anthropic (Hermes's own sign-in)
+| Provider | Status |
+|---|---|
+| Nous Portal | Tested on Windows and Linux |
+| OpenAI Codex | Tested on Linux |
+| xAI | Not yet run against the provider |
+| MiniMax | Not yet run against the provider |
+| Anthropic (Hermes's own sign-in) | Not yet run against the provider |
 
 Providers whose sign-in cannot be used are listed in
 [API keys and providers](credentials.md#providers-that-work-in-the-sandbox).
@@ -101,8 +103,3 @@ To fix it:
 
 What else happens around an expired sign-in is in
 [Sign-in renewal](sign-in-renewal.md#a-sign-in-that-the-provider-no-longer-renews).
-
-## What has been run
-
-Which sign-ins have been run in a real sandbox, and on which system, is listed in
-[Known issues](known-issues.md#sign-ins-what-has-been-run).

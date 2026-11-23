@@ -8,7 +8,7 @@ The plugin's overview and quickstart are in the [README](../README.md).
 | Page | What it is for |
 |---|---|
 | [Install, update and uninstall](install.md) | Get the Hermes build, install the plugin, check the computer, install OpenShell |
-| [Set up Windows](setup-windows.md) | Windows version, Smart App Control, MXC and the sandbox's shell |
+| [Set up Windows](setup-windows.md) | Windows version, MXC and the sandbox's shell |
 | [Set up Linux](setup-linux.md) | Kernel, Docker and the systemd user session |
 | [Beta testing](beta-testing.md) | What testers should try and how to report |
 

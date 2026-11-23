@@ -82,7 +82,7 @@ What the plugin calls in Hermes is listed in
 
 The switch does not turn on for the default profile yet. Use another profile.
 
-A test profile with a working model keeps your own profiles out of the test:
+Create one with a working model:
 
 ```bash
 hermes profile create sbtest --clone
@@ -180,8 +180,6 @@ Notes for Windows:
   emulated x64 Python on an Arm64 PC.
 - The package prints version 0.1.9 but is built from OpenShell's `windows` branch, so it isn't the
   same code as OpenShell 0.1.9 on Linux.
-- The package needs no Microsoft Visual C++ Redistributable. If you installed one for an earlier
-  beta, you can keep it.
 - To install from a folder that already holds the four programs, use
   `hermes sandbox runtime install --build-dir <dir>` or set `HERMES_OPENSHELL_BUILD_DIR`.
   The same checks apply.
@@ -215,7 +213,7 @@ runs on it. Sandboxes that are running keep the build they started with until th
 3. Turn off **Desktop: Sandbox** in Capabilities > Plugins.
 4. Remove the plugin: `hermes -p <profile> plugins remove openshell`.
 5. Optional: delete `openshell/<profile>/` in the Hermes data folder. It holds the saved folders,
-   sites and card log. Delete the test profile itself with `hermes profile delete sbtest`.
+   sites and card log. Delete the profile itself with `hermes profile delete sbtest`.
 6. Windows: remove what [Set up Windows](setup-windows.md#remove-the-windows-prerequisites) lists.
 7. Linux: remove the images if you don't need them. See
    [Set up Linux](setup-linux.md#remove-the-images).

@@ -25,7 +25,7 @@ run-elsewhere marker for the profile, and the desktop's route for the profile.
 The order makes a half-finished switch fail closed.
 
 1. The host check must pass. See [Troubleshooting](troubleshooting.md#the-switch-does-not-turn-on).
-2. On a desktop that supports it, the desktop asks you first, so nothing starts before you agreed.
+2. The desktop asks you first, so nothing starts before you agreed.
 3. The plugin checks the sandbox driver, reviews the last session if it ended without a review,
    saves the settings, copies the profile's keys and model endpoints, records the profile folder,
    and starts the launcher as a login service.
@@ -117,8 +117,7 @@ profile is signed in to a provider the sandbox can use. See [Provider sign-ins](
 
 ### On Windows
 
-- The launcher lists the files as MXC denied paths (`driver_config.mxc.denied_paths`, added in
-  [NVIDIA/OpenShell#5033](https://github.com/NVIDIA/OpenShell/pull/5033)).
+- The launcher lists the files as MXC denied paths (`driver_config.mxc.denied_paths`).
 - Every hidden path sits directly under a folder the sandbox cannot rename.
 - The launcher refuses to start while a credential file exists below a folder the sandbox writes,
   because renaming that folder would expose the file.

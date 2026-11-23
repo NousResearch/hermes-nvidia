@@ -32,7 +32,6 @@ value is replaced anyway:
   The reply starts again twice at most, however many sign-ins are due.
 
 This is what OpenShell does on Linux.
-In the one run on Windows, a value replaced under a streaming reply did not cut it.
 
 ## How often the launcher asks a provider
 
@@ -85,9 +84,9 @@ Once it is renewed, the page asks for a restart, which hands it in again.
 
 ### What a chat shows
 
-What a message shows once the provider no longer accepts the token is Hermes's own:
+What a message shows once the provider no longer accepts the token is Hermes's own.
+A chat can show either of these:
 
-| Run | What the chat showed |
-|---|---|
-| Linux | The reply failed with Hermes's text for a rejected sign-in, which names a sign-in command. That command needs the sandbox off. |
-| Windows | "Provider temporarily unavailable", and Hermes retried for several minutes |
+- The reply fails with Hermes's text for a rejected sign-in. The text names a sign-in command, and
+  that command needs the sandbox off.
+- "Provider temporarily unavailable", and Hermes retries for several minutes.

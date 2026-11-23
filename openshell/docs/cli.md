@@ -117,7 +117,7 @@ Shows the running sandbox's state. It fails with status 1 when no sandbox runs f
 | `builtin` | What the launcher keeps open by itself |
 | `opened` | Every address a sign-in or a key is used at |
 | `endpoint_changed` | Keys withheld because a model's endpoint was changed inside the sandbox |
-| `pinned` | `false` for a sandbox switched on before the launcher kept copies; turn it off and on |
+| `pinned` | `false` when the launcher holds no copies of the profile's keys and model endpoints; turn the sandbox off and on |
 | `handback` | Whether a record was taken at switch-on, and how many kept changes are still in the profile |
 | `providers` | The profile's providers and whether each works in the sandbox |
 | `capabilities`, `restarting`, `restart`, `switching_off` | Details the Sandbox page reads |

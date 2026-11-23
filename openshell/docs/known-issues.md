@@ -8,7 +8,6 @@ This page lists the limits and open problems of the beta, with what to do about 
 
 - macOS isn't supported.
 - Windows on Arm64 and Linux aarch64 have not been run on real hardware yet.
-  Reports from those machines are especially welcome.
 
 ### The default profile can't be switched on
 
@@ -16,10 +15,14 @@ The switch refuses the default profile. Use another profile.
 
 ### Smart App Control (Windows)
 
-The beta needs Smart App Control off or in evaluation mode.
-Installed from source, Hermes itself has parts that are not code-signed, with or without this
-plugin. Nobody has run this plugin with Smart App Control on.
-See [Set up Windows](setup-windows.md#check-smart-app-control).
+The plugin has not been run with Smart App Control on.
+
+Hermes itself has open reports of Smart App Control blocking parts of a source install:
+[hermes-agent#148950](https://github.com/NousResearch/hermes-agent/issues/148950),
+[hermes-agent#154847](https://github.com/NousResearch/hermes-agent/issues/154847) and
+[hermes-agent#125601](https://github.com/NousResearch/hermes-agent/issues/125601).
+
+The sandbox's shell, busybox-w32, is not code-signed.
 
 ## Switching on and off
 
@@ -61,8 +64,7 @@ The first restart for a folder grant in a session takes about 15 seconds longer 
 
 Unless `sandbox runtime install` ran before it, the first switch-on downloads and installs the
 sandbox's programs, about 100 MB in all. Until it is done, the page and the status bar show only
-"Starting sandbox…", with no word of a download. In the one measured run that took 59 seconds,
-on a fast connection and without the download of OpenShell's own 60 MB.
+"Starting sandbox…", with no word of a download.
 
 Wait for it, or run `hermes -p <profile> sandbox runtime install` in a terminal first.
 See [Install](install.md#install-openshell).
@@ -92,11 +94,6 @@ matches its pinned sha256 as if it were missing: `"file": null`, `"installed": f
 "not installed yet: ...". The file is still at its path.
 The next switch-on or `sandbox runtime install` installs it again.
 
-### An empty `programs` folder stays after a failed download
-
-After a download that failed, the empty folder `openshell\runtime\programs` stays in the Hermes
-data folder. It does no harm. The next install uses it, and `sandbox runtime remove` removes it.
-
 ## Cards and replies
 
 ### `[Sandbox]` notes appear inside your next message
@@ -107,8 +104,8 @@ next message bubble, as if you had typed them. The agent reads them as the plugi
 ### "Response stopped" can flash when a paused reply goes on
 
 While the plugin applies your answer to a card, and during a folder restart, the reply shows that
-it is continuing. As it goes on, "Response stopped" can show for an instant (seen once in eleven
-folder restarts). A reply you stopped yourself keeps it.
+it is continuing. As it goes on, "Response stopped" can show for an instant.
+A reply you stopped yourself keeps it.
 
 ### A late Allow can take up to about 35 seconds
 
@@ -177,7 +174,7 @@ The launcher renews a sign-in between replies. If replies stream until shortly b
 expires, the renewal cuts the reply that is streaming. Hermes asks the model again by itself, and
 the chat shows no error.
 
-This was seen on Linux. In the one run on Windows the reply was not cut.
+This is what OpenShell does on Linux.
 See [Sign-in renewal](sign-in-renewal.md#a-reply-that-is-streaming-when-a-renewal-is-due).
 
 ### A sign-in that the provider no longer renews
@@ -195,15 +192,6 @@ The launcher limits how often it asks a provider to renew a sign-in. A sign-in w
 tried 150 times within an hour is left alone until the sandbox is turned off and on, and the page
 shows "Sign-in expired" for it.
 See [Sign-in renewal](sign-in-renewal.md#how-often-the-launcher-asks-a-provider).
-
-### Sign-ins: what has been run
-
-- Nous Portal has been run in a sandbox on Linux and on Windows.
-- OpenAI Codex has been run in a sandbox on Linux.
-- xAI, MiniMax and Hermes's own Anthropic sign-in are covered by the test suite against stand-in
-  issuers only.
-
-Reports are welcome.
 
 ## Credential files
 
