@@ -3,14 +3,6 @@
 This page is for people who test the plugin before its Hermes support is released: what you need,
 what to try, and how to report what you find.
 
-## Before you start
-
-- Use a test profile. Keep the profile you rely on every day out of the test.
-- On Windows, a spare or test PC is the better place for this beta.
-  Read [Set up Windows](setup-windows.md#check-smart-app-control) before you decide.
-- On Windows the sandbox is defense in depth. Do not rely on it as a security boundary.
-  See [Security](security.md).
-
 ## Get set up
 
 1. Check that your system is supported and finish its setup:
