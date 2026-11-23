@@ -1,0 +1,139 @@
+{
+  "_comment": "What the openshell plugin installs and runs. Changing an id here makes every Hermes root upgrade its runtime and restart its gateway (when no sandbox runs on it). Edit only with fresh verification evidence.",
+  "linux": {
+    "id": "openshell-v0.1.9",
+    "version": "0.1.9",
+    "release_url": "https://github.com/ai-openshell/openshell/releases/download/v0.1.9",
+    "checksum_files": {
+      "openshell-checksums-sha256.txt": "842ab0b6314367e13bc4bdc3c9f225623a6f09ed0c88082a4ce5f709ca36e7bf",
+      "openshell-gateway-checksums-sha256.txt": "f656fe163fd6a68957c4b06c88dd17dee0168359891d827ab189df32ea767ed7",
+      "openshell-sandbox-checksums-sha256.txt": "4e7425814306730302f5acb62e8e36aa7459d7fa30685c18499932509a091ffb",
+      "openshell-supervisor-checksums-sha256.txt": "5e50d1529a248e07f8cfc2de0a8f4c755b307026ececd83d39b9fd4d1f53047a"
+    },
+    "assets": {
+      "x86_64": {
+        "openshell": "openshell-x86_64-unknown-linux-musl.tar.gz",
+        "openshell-gateway": "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+        "openshell-supervisor": "openshell-supervisor-x86_64-unknown-linux-gnu.tar.gz",
+        "openshell-sandbox": "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz"
+      },
+      "aarch64": {
+        "openshell": "openshell-aarch64-unknown-linux-musl.tar.gz",
+        "openshell-gateway": "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
+        "openshell-supervisor": "openshell-supervisor-aarch64-unknown-linux-gnu.tar.gz",
+        "openshell-sandbox": "openshell-sandbox-aarch64-unknown-linux-musl.tar.gz"
+      }
+    },
+    "_sdk_wheel": "From v0.1.8 on OpenShell publishes its Python SDK on PyPI only (no release file lists the wheel), so it is pinned like the python_deps wheels: file, sha256 and URL. A release that attaches the wheel can name the file instead (\"sdk_wheel\": \"<file>\"); it is then checked against the release checksum files.",
+    "sdk_wheel": {"file": "openshell-0.1.9-py3-none-any.whl", "sha256": "5805829ef04b98d84dd6b2f4707f079c87bf8a4225a516b3b11bc6f84d56a9be",
+                  "url": "https://files.pythonhosted.org/packages/e8/44/c812c8d9a2f510f54f3c6a2e5ce492a0b50a2a002173f19a6d263d2edcc3/openshell-0.1.9-py3-none-any.whl"},
+    "images": {
+      "openshell-supervisor": {"ref": "ghcr.io/nvidia/openshell/supervisor@sha256:f1ec231b5dbe5b6a40c33acb2ac847995aabb959a56134ef6d7d7aa4f43199d3", "path": "/openshell-supervisor"},
+      "openshell-sandbox": {"ref": "ghcr.io/nvidia/openshell/sandbox@sha256:e57d07cd6cc1fc314b80368d6b51ec6fbf825fb62cd8f081312941180846866f", "path": "/openshell-sandbox"}
+    },
+    "python_deps": [
+      {"module": "typing_extensions", "name": "typing-extensions", "version": "4.16.0", "wheels": [
+        {"file": "typing_extensions-4.16.0-py3-none-any.whl", "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+         "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl"}]},
+      {"module": "cloudpickle", "name": "cloudpickle", "version": "3.1.2", "wheels": [
+        {"file": "cloudpickle-3.1.2-py3-none-any.whl", "sha256": "9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a",
+         "url": "https://files.pythonhosted.org/packages/88/39/799be3f2f0f38cc727ee3b4f1445fe6d5e4133064ec2e4115069418a5bb6/cloudpickle-3.1.2-py3-none-any.whl"}]},
+      {"module": "google.protobuf", "name": "protobuf", "version": "6.33.6", "wheels": [
+        {"file": "protobuf-6.33.6-cp39-abi3-manylinux2014_x86_64.whl", "machine": "x86_64", "libc": "glibc", "sha256": "e9db7e292e0ab79dd108d7f1a94fe31601ce1ee3f7b79e0692043423020b0593",
+         "url": "https://files.pythonhosted.org/packages/16/92/d1e32e3e0d894fe00b15ce28ad4944ab692713f2e7f0a99787405e43533a/protobuf-6.33.6-cp39-abi3-manylinux2014_x86_64.whl"},
+        {"file": "protobuf-6.33.6-cp39-abi3-manylinux2014_aarch64.whl", "machine": "aarch64", "libc": "glibc", "sha256": "e2afbae9b8e1825e3529f88d514754e094278bb95eadc0e199751cdd9a2e82a2",
+         "url": "https://files.pythonhosted.org/packages/ee/90/b3c01fdec7d2f627b3a6884243ba328c1217ed2d978def5c12dc50d328a3/protobuf-6.33.6-cp39-abi3-manylinux2014_aarch64.whl"},
+        {"file": "protobuf-6.33.6-py3-none-any.whl", "sha256": "77179e006c476e69bf8e8ce866640091ec42e1beb80b213c3900006ecfba6901",
+         "url": "https://files.pythonhosted.org/packages/c4/72/02445137af02769918a93807b2b7890047c32bfb9f90371cbc12688819eb/protobuf-6.33.6-py3-none-any.whl"}]},
+      {"module": "google.rpc", "name": "googleapis-common-protos", "version": "1.75.5", "wheels": [
+        {"file": "googleapis_common_protos-1.75.5-py3-none-any.whl", "sha256": "d7285525c23039db98f2463e6d5a4f9b958b94d497f03a844ece3259c4e72d5d",
+         "url": "https://files.pythonhosted.org/packages/65/b9/6b29500a1c581ff4d77fd83c6568d068bee06f1b139fb6eb0a4f2d4bce8a/googleapis_common_protos-1.75.5-py3-none-any.whl"}]},
+      {"module": "grpc", "name": "grpcio", "version": "1.84.0", "wheels": [
+        {"file": "grpcio-1.84.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", "python": "cp314", "machine": "x86_64", "libc": "glibc",
+         "sha256": "57dc36a5ab0e676f5f6e171de2917fd0aef73f32a9aaf23956bfe19997a30bd1",
+         "url": "https://files.pythonhosted.org/packages/21/d7/94240c7fae121ff1f116dcf04a3b7ee0216a06832c704310363f72638d4c/grpcio-1.84.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"},
+        {"file": "grpcio-1.84.0-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", "python": "cp314", "machine": "aarch64", "libc": "glibc",
+         "sha256": "e90e3bdf7b5eac005fef631adae9cafde16f922def207b80a7c46b253c18ad20",
+         "url": "https://files.pythonhosted.org/packages/af/64/ac86d638ba7f73bee0dccb608ba551d4f63adf75151f00d2c43e46d3979e/grpcio-1.84.0-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"}]}
+    ]
+  },
+  "windows": {
+    "id": "openshell-windows-0.1.9",
+    "version": "0.1.9",
+    "_version": "The number the programs print. It says nothing about what this build can do: see source and features. The plugin decides Windows behaviour from features only.",
+    "source": "NVIDIA's signed Windows package for x64 from the OpenShell v0.1.9 release (OpenShell-Windows-0.1.9-x64.zip). NVIDIA built it from the OpenShell windows branch at 7e4e113e3 (7e4e113e3249238b61db71947c4b79b2d7a247e3) and stamped it 0.1.9. It is not built from the v0.1.9 tag's source: the windows branch does not hold the changes OpenShell's main branch made in 0.1.6 to 0.1.9. The four programs carry the C runtime and Z3 inside them: the package has no Z3 library file and needs no Visual C++ Redistributable.",
+    "signer": "NVIDIA Corporation",
+    "_signer": "The publisher of every file under binaries: the common name of its Authenticode signing certificate. On Windows the installer refuses a file that is unsigned, whose signature Windows does not accept, or that another publisher signed.",
+    "features": ["ca-bundle-system-roots", "mxc-driver-config-denied-paths"],
+    "_features": "policy-reload-keeps-streams (not in this build): a live policy update keeps unchanged connections (the model's streaming reply) open, so card answers apply mid-turn. Without it the launcher stops the answering chat's turn at the refused tool call, applies the rule and continues the chat. ca-bundle-system-roots: the sandbox's CA bundle (SSL_CERT_FILE, REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE, GIT_SSL_CAINFO) holds the Windows roots too, so granted sites can be plain TLS tunnels with their own certificate. Without it grants stay terminated by the proxy. mxc-driver-config-denied-paths: the MXC driver takes driver_config.mxc.denied_paths (NVIDIA/OpenShell#5033), the only way the plugin hides credential files on Windows. Without it the driver refuses to start.",
+    "archive": {
+      "url": "https://github.com/ai-openshell/openshell/releases/download/v0.1.9/OpenShell-Windows-0.1.9-x64.zip",
+      "sha256": "f95c30cfc957d1d3150269c6e681c5cadec4a717408956e7ff3a9d265056ffc4"
+    },
+    "_archive": "The release zip. The installer downloads it, refuses it unless its sha256 matches, unpacks only the files under binaries from the zip's one <top folder>/bin/ and refuses any whose sha256 differs from its pin below. Nothing else in the zip is written to disk. The release lives at github.com/ai-openshell/openshell, the repository that was github.com/NVIDIA/OpenShell until it moved to the OpenShell organisation (the old address redirects). The package's own records (its manifest, the release's validation file and attestations) were made before the move and name NVIDIA/OpenShell.",
+    "binaries": {
+      "openshell.exe": "6ceb2c281e607b0dae48b58a04779c78e9747473db1f6006ba95b39326ae331d",
+      "openshell-gateway.exe": "73693d257b7d04e7cff70fbb87469a2421e5ee835d7d8c01fe5efd7cdf8c36b3",
+      "openshell-supervisor.exe": "5361660bcf9072b839786555387d60dbc1867be0c932ce2bd4b68792dc0c68c6",
+      "openshell-windows-sandbox.exe": "168079859f5ff02983114f8878910e11604110082343f6e84b279ea7039c552e"
+    },
+    "_aarch64": "The Arm64 package of the same release and source. The installer picks it on an Arm64 PC (also when Hermes runs an emulated x64 Python there), with its own id, archive and binaries; version, signer and features are the ones above.",
+    "aarch64": {
+      "id": "openshell-windows-0.1.9-arm64",
+      "source": "NVIDIA's signed Windows package for Arm64 from the OpenShell v0.1.9 release (OpenShell-Windows-0.1.9-arm64.zip). NVIDIA built it from the OpenShell windows branch at 7e4e113e3 (7e4e113e3249238b61db71947c4b79b2d7a247e3) and stamped it 0.1.9. It is not built from the v0.1.9 tag's source: the windows branch does not hold the changes OpenShell's main branch made in 0.1.6 to 0.1.9. The four programs carry the C runtime and Z3 inside them: the package has no Z3 library file and needs no Visual C++ Redistributable.",
+      "archive": {
+        "url": "https://github.com/ai-openshell/openshell/releases/download/v0.1.9/OpenShell-Windows-0.1.9-arm64.zip",
+        "sha256": "253413c616685ca1633a9f9d279ae4514c493a1a996c057e88feb53d9dba8131"
+      },
+      "binaries": {
+        "openshell.exe": "b10173660cba40a99c5e929adfa08c72669d9bd485f95ef87a5d7b09c5d5b806",
+        "openshell-gateway.exe": "94d9e156113f595cd3be53a7594db58fa5d8da2e29af46db01f884b8941bb0b1",
+        "openshell-supervisor.exe": "0e64891ea7b641d498cf5a59d31bcf4555ae4a4a1e9500633cc1f4da78984348",
+        "openshell-windows-sandbox.exe": "9b8e7ff97b2bb83093e8634800aa2df66309428922e20357ec82e65b09922d15"
+      }
+    }
+  },
+  "_windows_previous": "The pin before windows, kept whole: NVIDIA's signed package from the OpenShell v0.1.8 release (five files, with libz3.dll; it needs the Microsoft Visual C++ Redistributable). Nothing reads windows_previous. To go back to it, put this block under the name windows and the windows block under another name: every Hermes root then installs the 0.1.8 package again at its next start, as for any change of id.",
+  "windows_previous": {
+    "id": "openshell-windows-0.1.8",
+    "version": "0.1.8",
+    "_version": "The number the programs print. It says nothing about what this build can do: see source and features. The plugin decides Windows behaviour from features only.",
+    "source": "NVIDIA's signed Windows package for x64 from the OpenShell v0.1.8 release (OpenShell-Windows-0.1.8-x64.zip). NVIDIA built it from the NVIDIA/OpenShell windows branch at e39791be4 (e39791be4f47ed6fb6357885ef42ca1339320679) and stamped it 0.1.8. It is not built from the v0.1.8 tag's source: the windows branch does not hold the changes OpenShell's main branch made in 0.1.6 to 0.1.8.",
+    "signer": "NVIDIA Corporation",
+    "_signer": "The publisher of every file under binaries: the common name of its Authenticode signing certificate. On Windows the installer refuses a file that is unsigned, whose signature Windows does not accept, or that another publisher signed.",
+    "features": ["ca-bundle-system-roots", "mxc-driver-config-denied-paths"],
+    "_features": "policy-reload-keeps-streams (not in this build): a live policy update keeps unchanged connections (the model's streaming reply) open, so card answers apply mid-turn. Without it the launcher stops the answering chat's turn at the refused tool call, applies the rule and continues the chat. ca-bundle-system-roots: the sandbox's CA bundle (SSL_CERT_FILE, REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE, GIT_SSL_CAINFO) holds the Windows roots too, so granted sites can be plain TLS tunnels with their own certificate. Without it grants stay terminated by the proxy. mxc-driver-config-denied-paths: the MXC driver takes driver_config.mxc.denied_paths (NVIDIA/OpenShell#5033), the only way the plugin hides credential files on Windows. Without it the driver refuses to start.",
+    "archive": {
+      "url": "https://github.com/ai-openshell/openshell/releases/download/v0.1.8/OpenShell-Windows-0.1.8-x64.zip",
+      "sha256": "db8d321668208961dd35651af4a98d7885893151921cb98dfa2b3eded2d2117b"
+    },
+    "_archive": "The release zip. The installer downloads it, refuses it unless its sha256 matches, unpacks only the files under binaries from the zip's one <top folder>/bin/ and refuses any whose sha256 differs from its pin below. Nothing else in the zip is written to disk.",
+    "binaries": {
+      "openshell.exe": "ff3e47d0d36fa8bddba51fed3edd373fca22db5a66ff2c9dabc60340fe76bfed",
+      "openshell-gateway.exe": "069b8def833d70e727408b0510870695efc45f9054b3814b7e2b8c77161efd66",
+      "openshell-supervisor.exe": "8959b36f59efc603f964e7f2cf2e0d21185e740ceb61b41a4dee46efcd5cea30",
+      "openshell-windows-sandbox.exe": "e80687d00cfe8a580e81ec2c155204dce2f9f75d3bb7e80aa7dd5ebd66a61a2b",
+      "libz3.dll": "9211e2f44263a42890de77a490db8a153d4b64144b5b7ee005063d266e2ab63e"
+    },
+    "_aarch64": "The Arm64 package of the same release and source. The installer picks it on an Arm64 PC (also when Hermes runs an emulated x64 Python there), with its own id, archive and binaries; version, signer and features are the ones above.",
+    "aarch64": {
+      "id": "openshell-windows-0.1.8-arm64",
+      "source": "NVIDIA's signed Windows package for Arm64 from the OpenShell v0.1.8 release (OpenShell-Windows-0.1.8-arm64.zip). NVIDIA built it from the NVIDIA/OpenShell windows branch at e39791be4 (e39791be4f47ed6fb6357885ef42ca1339320679) and stamped it 0.1.8. It is not built from the v0.1.8 tag's source: the windows branch does not hold the changes OpenShell's main branch made in 0.1.6 to 0.1.8.",
+      "archive": {
+        "url": "https://github.com/ai-openshell/openshell/releases/download/v0.1.8/OpenShell-Windows-0.1.8-arm64.zip",
+        "sha256": "63c3aeb9b19f2cfeadfe9943629d7c53b783f34b3c735811dba21801eb0f275a"
+      },
+      "binaries": {
+        "openshell.exe": "6e907a63db82924053fb7441c4fc9f20e992491f3ea09a7fef86192736f5baa3",
+        "openshell-gateway.exe": "42baed7a4f330c282b153933edd99fc104e83a86c470d77eef9c4cdd5e79b940",
+        "openshell-supervisor.exe": "bcff44e8888d3dec3b99e15d011a80fbbf5b72afbee6083e76f527d61e7d7ea2",
+        "openshell-windows-sandbox.exe": "d0728df8998fca424cb252119d6ea3f35b4882c8b286ddffd56ed0327311d20e",
+        "libz3.dll": "5e174245cec462276de4be33d4c42dbb68b3a8bf5e430523053d8ede3ea3310e"
+      }
+    }
+  },
+  "base_image": {
+    "repository": "hermes-sandbox-base",
+    "base": "debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad"
+  }
+}

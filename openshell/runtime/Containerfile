@@ -1,0 +1,23 @@
+# Hermes sandbox base image for the launcher's OpenShell driver (Linux, Docker driver).
+# Built on the user's machine by the openshell plugin (launcher/base_image.py) with the host's uid/gid
+# and the base pinned by digest (runtime/pins.json); rebuilt when this file's hash changes.
+# No Hermes inside: the launcher bind-mounts the host's own Hermes runtime (code, venv, store Python)
+# read-only at its host paths, so the sandbox always runs the installed Hermes. This image only
+# supplies glibc, a shell and a few tools the agent's terminal uses, plus a non-root user that owns
+# files the way the launcher's host user does (bind-mounted profile home and folders).
+ARG BASE=debian:trixie-slim
+FROM ${BASE}
+ARG HOST_UID=1000
+ARG HOST_GID=1000
+RUN apt-get -o Acquire::Retries=3 update \
+ && apt-get -o Acquire::Retries=3 install -y --no-install-recommends ca-certificates curl procps \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && groupadd -o -g "$HOST_GID" hermes \
+ && useradd -o -u "$HOST_UID" -g "$HOST_GID" -d /sandbox -M -s /bin/bash hermes \
+ && install -d -o hermes -g hermes /sandbox \
+ && install -d -m 0700 -o hermes -g hermes /sandbox/.run
+ENV HOME=/sandbox XDG_RUNTIME_DIR=/sandbox/.run LANG=C.UTF-8
+LABEL org.opencontainers.image.title="hermes-sandbox-base" \
+      org.opencontainers.image.description="Base for Hermes OpenShell sandboxes; Hermes is mounted from the host read-only"
+WORKDIR /sandbox
+USER hermes

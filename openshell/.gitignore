@@ -1,0 +1,9 @@
+__pycache__/
+.pytest_cache/
+
+# Local working notes; not part of the plugin.
+AGENTS.md
+docs/DELIVERY-PLAN.md
+docs/DESIGN.md
+docs/STATUS.md
+launcher/lab_access_cards.py

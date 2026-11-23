@@ -1,0 +1,9 @@
+name: openshell
+version: 0.1.0
+manifest_version: 2
+api_version: 1
+description: Run a profile's Hermes backend inside an NVIDIA OpenShell sandbox, switched on and off per profile.
+author: Nous Research
+license: MIT
+homepage: https://github.com/NousResearch/hermes-nvidia
+tags: [sandbox, openshell, nvidia]

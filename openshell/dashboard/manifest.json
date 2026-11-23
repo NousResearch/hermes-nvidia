@@ -1,0 +1,8 @@
+{
+  "name": "openshell",
+  "label": "Sandbox",
+  "description": "Sandbox settings for profiles that run unsandboxed (the launcher answers these routes for sandboxed ones).",
+  "version": "0.1.0",
+  "tab": {"hidden": true},
+  "api": "plugin_api.py"
+}
