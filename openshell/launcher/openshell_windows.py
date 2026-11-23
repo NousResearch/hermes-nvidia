@@ -27,6 +27,8 @@ this driver on Windows. What differs from the Linux driver:
   a policy's paths in the form it was given. Network rules
   name the leaf interpreter (the store ``python.exe``), not the venv launcher, which never connects.
 * ``OPENSHELL_*`` names are reserved for ``--env``: busybox goes on PATH instead of ``OPENSHELL_BUSYBOX``.
+* MXC's ``wxc-exec`` and the shell are the plugin's own pinned installs (``windows_programs.py``) unless the
+  person named a copy of their own; the switch-on installs both before the MXC gate asks ``wxc-exec`` anything.
 * A model server on host loopback is reachable only through a provider at
   ``host.openshell.internal:<port>``; the sandbox's managed scope points the profile's model there.
 * MXC lets a sandbox reach every port on host-owned addresses (``host_loopback: open``), so the
@@ -40,7 +42,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 import threading
 import time
@@ -48,7 +49,7 @@ import urllib.parse
 from pathlib import Path, PureWindowsPath
 from typing import Optional
 
-from . import usage_data
+from . import usage_data, windows_programs
 from ..loopback_env import DIRECT, LOOPBACK_ENV
 from .driver import DriverUnavailable, LaunchRequest, NotSupported, ProposalChanged, SandboxDriver
 from .gateway_service import TELEMETRY_OFF, gateway_log
@@ -752,9 +753,17 @@ class OpenShellWindowsDriver(CredentialSinkMixin, SandboxDriver):
 
     def __init__(self, cfg: OpenShellConfig, *, wxc_exec: Optional[Path] = None,
                  gateway: Optional[CliGateway] = None, run=subprocess.run, popen=subprocess.Popen,
-                 reload_keeps_streams: bool = False, tls_tunnels: bool = False, denied_paths: bool = False):
+                 reload_keeps_streams: bool = False, tls_tunnels: bool = False, denied_paths: bool = False,
+                 programs_root: Optional[Path] = None, own_shell: Optional[Path] = None):
         self.cfg = cfg
         self.wxc_exec = Path(wxc_exec) if wxc_exec else None
+        # *wxc_exec* is a copy the person named (the spec, OPENSHELL_WXC_EXEC_PATH). Without one, the plugin's
+        # own pinned wxc-exec is installed under this Hermes root and checked before every use
+        # (``_pinned_wxc_exec``). No root: only a wxc-exec that was handed in is used.
+        self._own_wxc_exec = self.wxc_exec is not None
+        self._programs_root = Path(programs_root) if programs_root else None
+        # A shell the person named (the spec, OPENSHELL_BUSYBOX): the switch-on then installs none (``_pinned_shell``).
+        self._own_shell = Path(own_shell) if own_shell else None
         # Whether the MXC driver takes ``driver_config.mxc.denied_paths``: the managed runtime's pinned features say
         # so (DENY_FEATURE); a gateway the spec names says so with ``openshell.mxc_denied_paths``. Without it the
         # driver refuses to start (credential files would be readable inside).
@@ -800,14 +809,14 @@ class OpenShellWindowsDriver(CredentialSinkMixin, SandboxDriver):
 
     @classmethod
     def from_spec(cls, spec: dict) -> "OpenShellWindowsDriver":
+        from hermes_constants import get_default_hermes_root
+
         raw = dict(spec.get("openshell") or {})
-        wxc = None
-        for candidate in (spec.get("wxc_exec"), raw.get("wxc_exec"), os.environ.get("OPENSHELL_WXC_EXEC_PATH"),
-                          shutil.which("wxc-exec")):
-            if candidate and Path(candidate).is_file():
-                wxc = Path(candidate).resolve()
-                break
-        return cls(config_from_spec(spec), wxc_exec=wxc,
+        wxc = windows_programs.own("wxc-exec", spec)["file"]
+        if wxc is None and not windows_programs.supported("wxc-exec"):
+            wxc = windows_programs.on_path("wxc-exec")  # No pinned build for this PC: one on PATH, as before
+        return cls(config_from_spec(spec), wxc_exec=wxc, programs_root=get_default_hermes_root().resolve(),
+                   own_shell=windows_programs.own("busybox", spec)["file"],
                    reload_keeps_streams=bool(raw.get("reload_keeps_streams", False)),
                    tls_tunnels=bool(raw.get("tls_tunnels", False)),
                    denied_paths=bool(raw.get("mxc_denied_paths", False)))
@@ -852,9 +861,26 @@ class OpenShellWindowsDriver(CredentialSinkMixin, SandboxDriver):
         return self._name
 
     # -- lifecycle -----------------------------------------------------------------------------
+    def _pinned_wxc_exec(self) -> None:
+        """Without a wxc-exec of the person's own: the plugin's pinned one, installed when it is missing and
+        compared with its pinned sha256 again, before anything asks it a question or starts a sandbox with it
+        (``windows_programs.ensure``; an install that fails or is refused raises ``DriverUnavailable``)."""
+        if self._own_wxc_exec or self._programs_root is None or not windows_programs.supported("wxc-exec"):
+            return
+        self.wxc_exec = windows_programs.ensure(self._programs_root, "wxc-exec")
+
+    def _pinned_shell(self) -> None:
+        """The shell is the supervisor's to hand in at every sandbox start (``Supervisor._busybox``). The
+        switch-on installs the plugin's pinned one here already: a download that cannot be made then stops the
+        switch with its reason, before OpenShell is installed and a gateway started."""
+        if self._own_shell is None and self._programs_root is not None and windows_programs.supported("busybox"):
+            windows_programs.ensure(self._programs_root, "busybox")
+
     def preflight(self) -> dict:
         if os.name != "nt":
             raise DriverUnavailable("the Windows OpenShell driver runs on Windows only.")
+        self._pinned_wxc_exec()
+        self._pinned_shell()
         if self.wxc_exec is None:
             raise DriverUnavailable("wxc-exec not found: the launcher probes MXC before using OpenShell's MXC driver; "
                                     "set wxc_exec in the spec, OPENSHELL_WXC_EXEC_PATH, or put it on PATH.")
@@ -915,6 +941,7 @@ class OpenShellWindowsDriver(CredentialSinkMixin, SandboxDriver):
     def _start(self, request: LaunchRequest) -> None:
         if request.home is None or not request.inner_port or not request.inner_token:
             raise RuntimeError("the OpenShell driver needs the profile home, inner port and inner token")
+        self._pinned_wxc_exec()  # Every start: the file the gateway starts sandboxes with still is the pinned one
         if self.cfg.managed_root is not None:  # the shared gateway is healthy before a sandbox is created
             self._adopt_runtime(ensure_managed(self.cfg, kind="mxc", wxc_exec=self.wxc_exec))
         self._check_deny_support()  # before anything is created: the runtime may have changed since preflight

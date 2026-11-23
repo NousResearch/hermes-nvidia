@@ -328,12 +328,17 @@ def secrets_env(monkeypatch):
 
 
 def test_a_windows_sandbox_without_busybox_refuses_to_start(tmp_path, monkeypatch, secrets_env):
-    # No busybox means no terminal.backend pin, and core refuses a withheld .env without one.
+    # No busybox means no terminal.backend pin, and core refuses a withheld .env without one. The plugin installs
+    # the shell itself where it has a pinned build for the PC (test_windows_programs_wiring.py); where it has
+    # none, a PC with no copy named and none on PATH is refused here.
     from openshell import busybox_env
+    from openshell.launcher import windows_programs
 
     layout, runtime, cfg, bb = _tree(tmp_path)
     sup = _supervisor(layout, runtime, _driver(cfg, FakeCli(), tmp_path), bb)
     sup.spec.pop("busybox", None)
+    monkeypatch.delenv("OPENSHELL_BUSYBOX", raising=False)
+    monkeypatch.setattr(windows_programs, "supported", lambda name: False)
     monkeypatch.setattr(busybox_env, "find_busybox", lambda: None)
     with pytest.raises(S.SandboxStartError, match="busybox-w32 was not found"):
         sup._launch_request()

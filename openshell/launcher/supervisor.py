@@ -282,9 +282,15 @@ class Supervisor:
             if not path.is_file():
                 raise SandboxStartError(f"busybox not found at {path}")
             return path.resolve()
-        from ..busybox_env import find_busybox
+        from . import windows_programs
+        from .driver import DriverUnavailable
 
-        found = find_busybox()
+        # The person's own copy (OPENSHELL_BUSYBOX), else the plugin's pinned one: installed when it is missing,
+        # and compared with its pinned sha256 again at every sandbox start.
+        try:
+            found = windows_programs.use("busybox", self.spec, self.layout.root)["file"]
+        except DriverUnavailable as exc:
+            raise SandboxStartError(str(exc)) from exc
         if found is None:
             # Without busybox there is no backend pin, and a backend that can't read its withheld .env
             # refuses to start without one; fail here with the reason instead of a dead sandbox.

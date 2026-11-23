@@ -72,6 +72,25 @@ def real_apps_guard(request, monkeypatch):
         pytest.fail(guard.report(), pytrace=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_download_from_another_computer(monkeypatch):
+    """The installer's downloader fetches from this computer only: a test's own loopback server. A test that
+    reaches it with any other address is stopped before a request is made."""
+    import urllib.parse
+
+    compat_modules()  # Registers the dashboard router's package name
+    for name in ("openshell.launcher.openshell_install", f"{_ROUTER_PKG}.launcher.openshell_install"):
+        module = importlib.import_module(name)
+
+        def download(url, dest, *args, _real=module._download, **kwargs):
+            host = urllib.parse.urlsplit(str(url)).hostname or ""
+            if host not in ("127.0.0.1", "localhost", "::1"):
+                raise AssertionError(f"a test must not download from another computer: {url}")
+            return _real(url, dest, *args, **kwargs)
+
+        monkeypatch.setattr(module, "_download", download)
+
+
 COMPATIBLE = {"ok": True, "platform": "test", "code": "ok", "reason": None, "action": None, "detail": None,
               "facts": {}, "checked_at": 0.0}
 

@@ -4,9 +4,10 @@ spec.yaml::
 
     port: 47811            # fixed outer loopback port the desktop connects to
     driver: openshell      # the only driver (OpenShell on every OS)
-    wxc_exec: C:/...       # Windows: MXC 1.0 or newer, probed before OpenShell's MXC driver is used; else
-                           # OPENSHELL_WXC_EXEC_PATH, else PATH
-    busybox: C:/...        # optional busybox-w32 for the sandbox's shell; else the plugin's bin/ or PATH
+    wxc_exec: C:/...       # Windows, optional: your own wxc-exec (MXC 1.0 or newer); else OPENSHELL_WXC_EXEC_PATH,
+                           # else the one the plugin installs (windows_programs.py)
+    busybox: C:/...        # Windows, optional: your own busybox-w32 for the sandbox's shell; else
+                           # OPENSHELL_BUSYBOX, else the one the plugin installs
     openshell:             # openshell driver only; every key optional (see openshell_driver.config_from_spec)
       gateway: hermes-gw   # registered gateway (mTLS required); else OPENSHELL_GATEWAY, else the active one
       config_home: ~/.config   # XDG_CONFIG_HOME holding openshell/gateways/<gateway>

@@ -345,8 +345,10 @@ def render_config(kind: str, *, gw: Path, name: str, port: int, root: Path, iden
     return "\n".join(lines) + "\n"
 
 
-def service_spec(kind: str, *, gw: Path, port: int, root: Path, ident: dict) -> dict:
-    """What the bootstrap runs: argv, environment, binaries to re-verify."""
+def service_spec(kind: str, *, gw: Path, port: int, root: Path, ident: dict,
+                 wxc_exec: Optional[Path] = None) -> dict:
+    """What the bootstrap runs: argv, environment, binaries to re-verify. *wxc_exec* (the MXC gateway's) is
+    re-verified too when it is the plugin's own pinned install; a copy the person named has no pin."""
     gateway_bin = inst.bin_path(root, ident, "openshell-gateway")
     env = {"XDG_CONFIG_HOME": str(gw / "xdg-config"), "XDG_STATE_HOME": str(gw / "state"),
            "XDG_DATA_HOME": str(gw / "data"), "OPENSHELL_SYSTEM_GATEWAY_DIR": str(gw / "cli-system")}
@@ -369,6 +371,11 @@ def service_spec(kind: str, *, gw: Path, port: int, root: Path, ident: dict) -> 
     verify = {str(inst.identity_dir(root, ident) / "bin" / n): sha for n, sha in (ident.get("binaries") or {}).items()
               if n.startswith("openshell-gateway") or n.startswith(("openshell-supervisor", "openshell-windows-sandbox"))
               or n == "libz3.dll"}
+    if wxc_exec is not None:
+        from . import windows_programs
+
+        if windows_programs.installed(root, "wxc-exec") == Path(wxc_exec):
+            verify[str(wxc_exec)] = windows_programs.pinned("wxc-exec")["sha256"]
     return {"argv": argv, "env": env, "cwd": str(gw), "log": str(gw / "logs" / "gateway.log"), "verify": verify}
 
 
@@ -565,7 +572,7 @@ def ensure_gateway(root: Path, *, kind: Optional[str] = None, wxc_exec: Optional
         gateway_bin = inst.bin_path(root, ident, "openshell-gateway")
         ensure_pki(gw, gateway_bin, run=run)
         config = render_config(kind, gw=gw, name=name, port=port, root=root, ident=ident, wxc_exec=wxc_exec)
-        spec_for_service = service_spec(kind, gw=gw, port=port, root=root, ident=ident)
+        spec_for_service = service_spec(kind, gw=gw, port=port, root=root, ident=ident, wxc_exec=wxc_exec)
         desired = {"runtime_id": ident["id"], "config_sha256": hashlib.sha256(config.encode()).hexdigest(),
                    "port": port, "kind": kind,
                    # the service's environment counts too (supervisor tuning): a change restarts it when idle
@@ -588,7 +595,7 @@ def ensure_gateway(root: Path, *, kind: Optional[str] = None, wxc_exec: Optional
                                sandboxes=busy, kind=kind, container_cli=container_cli, run=run, base_image=base_image)
         if active != desired:
             (gw / "gateway.toml").write_text(config, encoding="utf-8")
-            _write_service(gw, service_spec(kind, gw=gw, port=port, root=root, ident=ident))
+            _write_service(gw, spec_for_service)
             state.update({"name": name, "port": port, "kind": kind, "active": desired,
                           "configured_at": time.time()})
             inst._write_json(gw / GATEWAY_FILE, state)
@@ -605,7 +612,7 @@ def ensure_gateway(root: Path, *, kind: Optional[str] = None, wxc_exec: Optional
                 raise DriverUnavailable(f"could not start the OpenShell gateway as a login service: {exc}") from exc
         else:
             if not (gw / "service" / SERVICE_FILE).is_file():
-                _write_service(gw, service_spec(kind, gw=gw, port=port, root=root, ident=ident))
+                _write_service(gw, spec_for_service)
             svc_state = service.state()
             if svc_state == "absent":
                 service.install()
@@ -691,7 +698,8 @@ def _launcher_alive(state: dict) -> bool:
 def release_if_unused(root: Path, *, leaving: Optional[str] = None, runtime=None,
                       manager: Optional[Callable] = None, run=subprocess.run) -> dict:
     """Remove the gateway when no profile is sandboxed any more (called when a profile's login
-    service is removed). The installed runtime and the base image stay as a cache."""
+    service is removed). The installed runtime and the base image stay as a cache. With no sandbox left that
+    could use them, the builds of an earlier pin of the Windows programs are removed too (``programs_removed``)."""
     root = Path(root)
     gw = gateway_dir(root)
     if not gw.exists():
@@ -700,7 +708,11 @@ def release_if_unused(root: Path, *, leaving: Optional[str] = None, runtime=None
         users = profiles_in_use(root, leaving=leaving)
         if users:
             return {"removed": False, "in_use": users}
-        return _remove(root, runtime=runtime, manager=manager, run=run)
+        out = _remove(root, runtime=runtime, manager=manager, run=run)
+        from . import windows_programs
+
+        dropped = windows_programs.prune(root)
+        return {**out, "programs_removed": dropped} if dropped else out
 
 
 def remove_gateway(root: Path, *, force: bool = False, runtime=None, manager: Optional[Callable] = None,

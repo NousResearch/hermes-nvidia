@@ -185,7 +185,8 @@ def availability(layout, *, check_host: bool = True, refresh: bool = False) -> d
 
 
 def host_check(layout, *, refresh: bool = False) -> dict:
-    """compat.check with the wxc-exec this profile's launcher would use (its spec, then the environment)."""
+    """compat.check with the wxc-exec this profile's launcher would use (its spec, then the environment, then
+    the plugin's own install under the profile's Hermes root)."""
     from . import compat
     from .layout import LayoutError
     from .spec import load_spec
@@ -194,7 +195,7 @@ def host_check(layout, *, refresh: bool = False) -> dict:
         spec = load_spec(layout)
     except (LayoutError, OSError, ValueError):
         spec = {}
-    return compat.check(compat.wxc_exec_for(spec), refresh=refresh)
+    return compat.check(compat.wxc_exec_for(spec, layout.root), refresh=refresh)
 
 
 def is_marked(layout) -> bool:

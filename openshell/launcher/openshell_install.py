@@ -1,13 +1,16 @@
 """Install pinned, verified OpenShell binaries for this Hermes root.
 
-Everything lands under the host-only ``<hermes root>/openshell/runtime/`` (no sandbox is granted it;
-the default profile's sandbox has ``<root>/openshell`` denied):
+Everything lands under the host-only ``<hermes root>/openshell/runtime/`` (no sandbox is granted it, but for
+the one folder that holds a Windows sandbox's shell, read-only; the default profile's sandbox has
+``<root>/openshell`` denied):
 
     runtime/installed.json        {"current": <id>}
     runtime/<id>/bin/             the binaries (openshell, openshell-gateway, ...)
     runtime/<id>/python/          Linux: the OpenShell SDK wheel plus any of its dependencies the
                                   Hermes environment lacks (the launcher's Linux driver speaks gRPC)
     runtime/<id>/identity.json    what was verified: source, asset and binary sha256s, images
+    runtime/programs/             Windows: MXC's wxc-exec and the sandbox's shell, each alone in a folder of
+                                  its own (windows_programs.py)
     runtime/gateway/              the private gateway (gateway_service.py)
     runtime/base-image.json       Linux: the locally built sandbox base image (base_image.py)
 
@@ -135,12 +138,33 @@ def windows_arches(pin: Optional[dict] = None) -> list[str]:
                     and pin[a].get("id") and pin[a].get("binaries")]
 
 
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
+def file_digest(path: Path, algorithm: str = "sha256"):
+    """The hash object of the file at *path* (``hashlib``'s *algorithm*), read in pieces."""
+    h = hashlib.new(algorithm)
     with open(path, "rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
-    return h.hexdigest()
+    return h
+
+
+def sha256_file(path: Path) -> str:
+    return file_digest(path).hexdigest()
+
+
+def plain_name(name) -> bool:
+    """Whether *name* is a file name and nothing more: no folder step, no drive, not ``.`` or ``..``."""
+    return bool(name) and isinstance(name, str) and name not in (".", "..") \
+        and not any(mark in name for mark in ("/", "\\", ":", "\0"))
+
+
+def entry_steps(raw: str) -> Optional[list]:
+    """The folder steps of an archive entry's path as the archive stores it, or None when the path could lead
+    out of the folder it is unpacked into: absolute, or holding a backslash, a colon, a NUL, or an empty, ``.``
+    or ``..`` step."""
+    steps = raw[:-1].split("/") if raw.endswith("/") else raw.split("/")
+    if "\\" in raw or ":" in raw or "\0" in raw or any(step in ("", ".", "..") for step in steps):
+        return None
+    return steps
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -298,13 +322,14 @@ def install_windows(root: Path, build_dir: Path, *, origin: Optional[dict] = Non
         raise
 
 
-def _check_publisher(bin_dir: Path, want: dict) -> dict:
+def _check_publisher(bin_dir: Path, want: dict, what: str = "the OpenShell build") -> dict:
     """A pin that names a ``signer``: every file in *bin_dir* must carry a valid Authenticode signature whose
     signing certificate has that common name. A file that is unsigned, whose signature Windows does not accept,
     or that someone else signed refuses the install. When the check itself cannot run (``authenticode.Unavailable``:
     not Windows, the API missing or failing) the install goes on with the sha256 pins it has already passed, and
     one line is logged. Returns what the identity records: ``signer`` and ``signature`` (``valid`` or
-    ``not checked``); nothing for a pin without a signer."""
+    ``not checked``); nothing for a pin without a signer. *what* names the pinned thing in the messages (the
+    OpenShell build, or one of the programs in ``windows_programs.py``)."""
     signer = want.get("signer")
     if not signer:
         return {}
@@ -312,17 +337,17 @@ def _check_publisher(bin_dir: Path, want: dict) -> dict:
         for name in want["binaries"]:
             got = authenticode.signature(bin_dir / name)
             if got["status"] == authenticode.UNSIGNED:
-                raise InstallError(f"{name} of the OpenShell build {want['id']} is not signed; the pinned build is "
+                raise InstallError(f"{name} of {what} {want['id']} is not signed; the pinned build is "
                                    f"signed by {signer}. Refused.")
             if got["status"] != authenticode.VALID:
-                raise InstallError(f"Windows does not accept the signature on {name} of the OpenShell build "
+                raise InstallError(f"Windows does not accept the signature on {name} of {what} "
                                    f"{want['id']}: {got.get('detail')}. Refused.")
             if got.get("signer") != signer:
-                raise InstallError(f"{name} of the OpenShell build {want['id']} is signed by {got.get('signer')!r}, "
+                raise InstallError(f"{name} of {what} {want['id']} is signed by {got.get('signer')!r}, "
                                    f"not by {signer}. Refused.")
     except authenticode.Unavailable as exc:
-        log.warning("OpenShell %s: the %s signatures could not be checked (%s); installed on the pinned sha256 "
-                    "checksums alone", want["id"], signer, exc)
+        log.warning("%s %s: the %s signatures could not be checked (%s); installed on the pinned sha256 "
+                    "checksums alone", what, want["id"], signer, exc)
         return {"signer": signer, "signature": "not checked"}
     return {"signer": signer, "signature": "valid"}
 
@@ -380,7 +405,7 @@ def _unpack_pinned(archive: Path, names, dest: Path) -> None:
     dest.mkdir(parents=True)
     wanted = {}
     for name in names:
-        if not name or name in (".", "..") or "/" in name or "\\" in name or ":" in name:
+        if not plain_name(name):
             raise InstallError(f"pinned file name {name!r} is not a plain file name")
         wanted[name.lower()] = name
     try:
@@ -391,8 +416,8 @@ def _unpack_pinned(archive: Path, names, dest: Path) -> None:
         found: dict = {}
         for info in z.infolist():
             raw = getattr(info, "orig_filename", None) or info.filename  # as stored: Windows rewrites backslashes
-            steps = raw[:-1].split("/") if raw.endswith("/") else raw.split("/")
-            if "\\" in raw or ":" in raw or "\0" in raw or any(step in ("", ".", "..") for step in steps):
+            steps = entry_steps(raw)
+            if steps is None:
                 raise InstallError(f"the OpenShell archive has an entry with an unsafe path ({raw[:120]!r}); refused")
             name = wanted.get(steps[-1].lower())
             if name is not None and not raw.endswith("/"):

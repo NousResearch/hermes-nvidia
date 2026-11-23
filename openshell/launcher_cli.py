@@ -35,6 +35,10 @@ plugin installs the pinned OpenShell (Linux: the release, checksum-verified; Win
 package from the pinned release, checksum- and signature-verified), runs the gateway with generated
 mTLS certificates as a login service shared by every sandboxed profile, and removes it when the last
 profile is switched off (``gateway``/``runtime`` show and manage it; see launcher/gateway_service.py).
+On Windows ``runtime install`` and the switch-on also install the two other programs a sandbox needs, MXC's
+``wxc-exec.exe`` and the sandbox's shell (launcher/windows_programs.py). ``check`` and ``runtime status`` say
+for each of the two which file is used and where it comes from: the plugin's pinned install, or a copy named
+with ``--wxc-exec`` / ``--busybox`` or with ``OPENSHELL_WXC_EXEC_PATH`` / ``OPENSHELL_BUSYBOX``.
 """
 from __future__ import annotations
 
@@ -62,8 +66,11 @@ def _setup(parser) -> None:
     serve.add_argument("--folder", action="append", metavar="PATH[:ro|rw]",
                        help="Folder the sandbox may use, read-only or read & write (repeat; replaces the saved list)")
     serve.add_argument("--wxc-exec", dest="wxc_exec", metavar="PATH",
-                       help="Windows: the wxc-exec.exe (MXC 1.0 or newer) to check the host's MXC with (saved)")
-    serve.add_argument("--busybox", metavar="PATH", help="busybox-w32 for the sandbox's shell (saved)")
+                       help="Windows: your own wxc-exec.exe (MXC 1.0 or newer) instead of the one the plugin "
+                            "installs (saved)")
+    serve.add_argument("--busybox", metavar="PATH",
+                       help="Windows: your own busybox-w32 for the sandbox's shell instead of the one the plugin "
+                            "installs (saved)")
     serve.add_argument("--openshell-gateway", dest="openshell_gateway", metavar="NAME",
                        help="Registered OpenShell gateway (mTLS) to run the sandbox on (saved)")
     serve.add_argument("--openshell-image", dest="openshell_image", metavar="REF",
@@ -107,7 +114,8 @@ def _setup(parser) -> None:
     gateway = sub.add_parser("gateway", help="This Hermes root's private OpenShell gateway")
     gateway.add_argument("action", choices=("status", "ensure", "remove"))
     gateway.add_argument("--force", action="store_true", help="remove even while profiles are switched on")
-    runtime = sub.add_parser("runtime", help="The installed OpenShell binaries")
+    runtime = sub.add_parser("runtime", help="The installed OpenShell binaries (Windows: and MXC's wxc-exec and "
+                                             "the sandbox's shell)")
     runtime.add_argument("action", choices=("status", "install", "remove"))
     runtime.add_argument("--build-dir", dest="build_dir", metavar="DIR",
                          help="Windows: a folder that already holds the pinned OpenShell files (default: "
@@ -557,6 +565,7 @@ def _cmd_check(args) -> int:
             extra = {"providers": [], "providers_error": str(exc)}
     result = {"ok": result["ok"], "ready": bool(result["ok"]) and refused is None,
               **{name: value for name, value in result.items() if name != "ok"}, **extra,
+              **_windows_programs(layout.root, layout),
               **({"switch_refused": refused} if refused else {}), **({"note": note} if note else {})}
     print(json.dumps(result, indent=2))
     for line in (refused, note):
@@ -762,6 +771,33 @@ def _hermes_root() -> Path:
     return get_default_hermes_root().resolve()
 
 
+def _profile_spec(layout=None) -> dict:
+    """This profile's saved sandbox spec (its ``--wxc-exec`` / ``--busybox``), or nothing when it has none."""
+    from .launcher.layout import LayoutError, current_profile
+    from .launcher.spec import load_spec
+
+    try:
+        return load_spec(layout if layout is not None else current_profile())
+    except (LayoutError, OSError, ValueError):
+        return {}
+
+
+def _windows_programs(root: Path, layout=None, *, install: bool = False) -> dict:
+    """On Windows, ``{"programs": ...}``: for MXC's wxc-exec and the sandbox's shell, the file the launcher uses
+    and where it comes from (launcher/windows_programs.py ``status``). *install* first installs each one the
+    person named no copy of. Nothing on another system."""
+    from .launcher import openshell_install as inst
+    from .launcher import windows_programs
+
+    if inst.platform_key() != "windows":
+        return {}
+    spec = _profile_spec(layout)
+    if install:
+        for name in windows_programs.PROGRAMS:
+            windows_programs.use(name, spec, root)
+    return {"programs": windows_programs.status(root, spec)}
+
+
 def _cmd_gateway(args) -> int:
     """This root's private OpenShell gateway: ``status``, ``ensure`` (through the profile's driver
     preflight, so the MXC gate runs first on Windows) or ``remove``."""
@@ -806,11 +842,12 @@ def _cmd_runtime(args) -> int:
             result = {"installed": inst.installed(root), "pinned": {k: pin.get(k) for k in ("id", "version", "arch",
                                                                                            "source", "signer", "error")
                                                                     if pin.get(k)},
-                      "dir": str(inst.runtime_dir(root))}
+                      "dir": str(inst.runtime_dir(root)), **_windows_programs(root)}
         elif args.action == "install":
             ident = inst.ensure_installed(root, build_dir=Path(args.build_dir) if args.build_dir else None,
                                           container_cli=shutil.which("docker") or shutil.which("podman"))
-            result = {"installed": ident, "dir": str(inst.identity_dir(root, ident))}
+            result = {"installed": ident, "dir": str(inst.identity_dir(root, ident)),
+                      **_windows_programs(root, install=True)}
         else:
             if gateway_service.gateway_dir(root).exists():
                 return _fail("the OpenShell gateway is still installed; `hermes sandbox gateway remove` first")

@@ -132,6 +132,40 @@
       }
     }
   },
+  "_windows_programs": "The two programs a Windows sandbox needs besides OpenShell (launcher/windows_programs.py): MXC's wxc-exec.exe, through which OpenShell's MXC driver starts every sandbox, and the sandbox's shell. The plugin installs the build for the PC's own architecture into <hermes root>/openshell/runtime/programs/<id>-<x64|arm64>/, each file alone in its folder, and compares the file's sha256 with this pin before every use. A changed id installs the new build. A copy of one's own, named by OPENSHELL_WXC_EXEC_PATH or OPENSHELL_BUSYBOX, is used instead of the pinned one.",
+  "windows_programs": {
+    "wxc-exec": {
+      "id": "mxc-sdk-1.0.1",
+      "version": "1.0.1",
+      "source": "Microsoft's MXC SDK as published on npm (@microsoft/mxc-sdk 1.0.1). The package carries wxc-exec.exe for x64 and for Arm64.",
+      "signer": "Microsoft Corporation",
+      "_signer": "The publisher of wxc-exec.exe: the common name of its Authenticode signing certificate. On Windows the installer refuses a file that is unsigned, whose signature Windows does not accept, or that another publisher signed.",
+      "archive": {
+        "url": "https://registry.npmjs.org/@microsoft/mxc-sdk/-/mxc-sdk-1.0.1.tgz",
+        "integrity": "sha512-2cP925G5+lQyKzjBVha8uNtVd7XESgDBtgi1yCYYSo9M3xiFyZWtCO4SWPGTk509rdI6nqjyGcZxvEP3t6l8Hg=="
+      },
+      "_archive": "The npm package file. integrity is the value the npm registry publishes for it (dist.integrity). The installer downloads the file, refuses it unless it matches, and reads exactly one member out of it, by the name under builds. Nothing else in the package is written to disk.",
+      "builds": {
+        "x86_64": {"file": "wxc-exec.exe", "member": "package/bin/x64/wxc-exec.exe",
+                   "sha256": "090f5d1f7bb93104ab08dcd4e8034ef954aeefcdaf6658dde5f7dff4cfc12f3a"},
+        "aarch64": {"file": "wxc-exec.exe", "member": "package/bin/arm64/wxc-exec.exe",
+                    "sha256": "91aa4171e8809f33f19622c381116188eab7d8c8cffad231230a31b58146ee77"}
+      }
+    },
+    "busybox": {
+      "id": "busybox-w32-FRP-6075-g169694ebd",
+      "version": "FRP-6075-g169694ebd",
+      "source": "busybox-w32 from frippery.org, the Unicode builds: busybox64u.exe for x64 and busybox64a.exe for Arm64. It is the shell of the sandbox's terminal, because Git Bash cannot start inside an MXC process container.",
+      "signer": null,
+      "_signer": "null: these builds are not code-signed. The installer checks the file's sha256 and no signature, and status reports what Windows says of the file (unsigned). When a signed build is pinned, put the publisher's name here (the common name of its signing certificate): the installer then requires that signature, as it does for wxc-exec.",
+      "builds": {
+        "x86_64": {"file": "busybox64u.exe", "url": "https://frippery.org/files/busybox/busybox-w64u-FRP-6075-g169694ebd.exe",
+                   "sha256": "6e263d154d8548d1eb936f65d1d8312c80df31c45974e48d6335e4dcc0f4f34c"},
+        "aarch64": {"file": "busybox64a.exe", "url": "https://frippery.org/files/busybox/busybox-w64a-FRP-6075-g169694ebd.exe",
+                    "sha256": "e67f873d19d58c535cc9f0c4965ffd622e19b7bab87e3da89cb2185fb54464d7"}
+      }
+    }
+  },
   "base_image": {
     "repository": "hermes-sandbox-base",
     "base": "debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad"

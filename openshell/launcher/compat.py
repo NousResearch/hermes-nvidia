@@ -15,7 +15,8 @@ Windows (MXC process containers under OpenShell's MXC driver):
   sandbox reaches OpenShell's proxy and a local model over host loopback, which arrived with the
   September 2026 update (process isolation itself came in August). A build the table doesn't know and
   that is newer than 24H2 passes on to the probe.
-* When wxc-exec is on this machine: it must be built for the machine's architecture (MXC ships
+* When wxc-exec is on this machine (the plugin's own install, or a copy the person named; see
+  ``windows_programs.py``): it must be built for the machine's architecture (MXC ships
   ``bin/x64`` and ``bin/arm64``; an emulated wxc-exec is not what the sandbox was tested with), and
   ``wxc-exec --probe`` must report the base-container tier,
   ``needsDaclAugmentation: false`` and the host-loopback and deny-path capabilities
@@ -93,15 +94,17 @@ def check(wxc_exec=None, *, refresh: bool = False) -> dict:
         return result
 
 
-def wxc_exec_for(spec: Optional[dict]) -> Optional[Path]:
-    """The wxc-exec the launcher would use for *spec* (the same order as the drivers), or None."""
-    spec = spec or {}
-    raw = spec.get("openshell") if isinstance(spec.get("openshell"), dict) else {}
-    for candidate in (spec.get("wxc_exec"), raw.get("wxc_exec"), os.environ.get("OPENSHELL_WXC_EXEC_PATH"),
-                      shutil.which("wxc-exec")):
-        if candidate and Path(candidate).is_file():
-            return Path(candidate).resolve()
-    return None
+def wxc_exec_for(spec: Optional[dict], root: Optional[Path] = None) -> Optional[Path]:
+    """The wxc-exec the launcher would use for *spec*, as the driver picks it (``windows_programs.chosen``):
+    the person's own copy, else the plugin's install under the Hermes root *root* (default: this one) once it
+    is there with its pinned sha256. None before that: this check installs nothing."""
+    from . import windows_programs
+
+    if root is None:
+        from hermes_constants import get_default_hermes_root
+
+        root = get_default_hermes_root().resolve()
+    return windows_programs.chosen("wxc-exec", spec, Path(root))["file"]
 
 
 def _check(platform: str, wxc_exec: Optional[Path]) -> dict:
@@ -228,7 +231,7 @@ def check_windows(wxc_exec: Optional[Path]) -> dict:
         return fail("windows-update", f"Needs the September 2026 Windows update. This PC has {label}.",
                     {"text": _UPDATE_TEXT}, detail=f"{line['update']} or later ({build}.{line['ubr']}+)")
     facts["os_table"] = "known" if line is not None else "newer"
-    if wxc_exec is None:  # nothing to probe yet; switch-on's preflight still requires wxc-exec
+    if wxc_exec is None:  # Nothing to probe yet: switch-on installs wxc-exec and its preflight probes with it
         facts["probe"] = "skipped: wxc-exec not found"
         return _result(True, "windows", "ok", facts=facts)
     exe_arch = _exe_arch(wxc_exec)
