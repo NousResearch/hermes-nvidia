@@ -103,10 +103,10 @@ See [Set up Windows](setup-windows.md#use-a-copy-of-your-own).
 
 ## Telemetry
 
-### Optional Relay response receipts
+### Relay response receipts
 
-To link a native Hermes model call to OpenShell's HTTP records, enable receipts in the
-profile's `config.yaml`:
+To link native model calls to OpenShell's HTTP records, enable receipts in the profile's
+`config.yaml`:
 
 ```yaml
 plugins:
@@ -117,19 +117,17 @@ plugins:
         relay_receipts: true
 ```
 
-This requires a Hermes build with the `llm_http_response` hook and a Relay build with
-`fork_scope_stack`, `use_scope_stack`, `scope_stack_active`, `capture_propagation_context`
-and `scope.event`. Do not assume the Relay version bundled with Hermes has those APIs.
-The plugin runs in process, inside the sandbox; plugin-host isolation is not supported.
+Requires Hermes's `llm_http_response` hook and a compatible Relay build. The version bundled
+with Hermes may not yet have the required APIs; the plugin warns and skips capture if they
+are missing. This works inside the sandbox with in-process plugins, not plugin-host isolation.
 
-Each receipt records only `x-openshell-request-id` and the HTTP status under the active
-Relay model call. It does not record other headers, bodies, prompts or credentials, and
-does not configure a telemetry exporter or open a network destination. Use Relay's `full`
-or `openinference` export mode to retain receipt marks.
+Receipts contain only the request ID and HTTP status, not other headers, bodies, prompts or
+credentials. Use Relay's `full` or `openinference` export mode to retain them. The plugin does
+not configure exporters or open network destinations.
 
-A receipt identifies a response, not successful body delivery or proof that a policy allowed
-the request. It is not an authorization token. Requests made by tool subprocesses are not
-covered. Receipts are off by default; model requests are unchanged if recording fails.
+A receipt means response headers arrived, not that a stream completed or a policy allowed
+the request. It is not an authorization token. Tool-subprocess requests are not covered.
+Capture is off by default; a recording failure does not change the model request's result.
 
 ### OpenShell's usage telemetry is off
 

@@ -98,23 +98,30 @@ def test_receipt_uses_real_model_parent_and_only_requests_one_header(observer):
     assert requested == ["x-openshell-request-id"]
 
 
-def test_invalid_receipts_and_observation_failures_do_not_change_model_result(observer, monkeypatch):
+def test_invalid_receipts_do_not_change_model_result(observer):
     relay, observe, events = observer
 
-    def response():
+    def report_invalid_receipts():
         for value, status in [(None, 200), ("bad-id", 200), (RECEIPT.upper(), 200),
                               (RECEIPT, 99), (RECEIPT, True)]:
             observe(status_code=status, get_header=lambda name: value)
-        with monkeypatch.context() as patch:
-            def unavailable(*args, **kwargs):
-                raise RuntimeError("observer unavailable")
-            patch.setattr(relay.scope, "event", unavailable)
-            observe(status_code=200, get_header=lambda name: RECEIPT)
 
-    assert run_model(relay, response) == {"ok": True}
+    assert run_model(relay, report_invalid_receipts) == {"ok": True}
     relay.subscribers.flush()
     assert not [event for event in events if event.name == "openshell.request.receipt"]
     assert any(event.name == "model" and event.scope_category == "end" for event in events)
+
+
+def test_recording_failure_does_not_change_model_result(observer, monkeypatch):
+    relay, observe, events = observer
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("observer unavailable")
+
+    monkeypatch.setattr(relay.scope, "event", unavailable)
+    assert run_model(relay, lambda: observe(status_code=200, get_header=lambda name: RECEIPT)) == {"ok": True}
+    relay.subscribers.flush()
+    assert not [event for event in events if event.name == "openshell.request.receipt"]
 
 
 def test_no_active_context_does_not_create_a_relay_trace(observer):
