@@ -11,6 +11,7 @@ the pinned OpenShell builds are changed.
 | `launcher_cli.py` | The `hermes sandbox` commands |
 | `launcher/` | The host launcher: the switch, the proxy, the drivers, the gateway, cards, keys and sign-ins, the review at switch-off, the activity log |
 | `sandbox_hook.py`, `inside/` | What runs inside the sandbox: the tool-result hook and the start-up step |
+| `relay_receipts.py` | Optional model-response receipts in Relay traces |
 | `busybox_env.py`, `loopback_env.py` | Windows only: the busybox terminal backend and the loopback names |
 | `desktop/plugin.js` | The desktop half: the Sandbox page |
 | `dashboard/` | The routes the host backend answers for a profile whose sandbox is off |
@@ -105,6 +106,7 @@ The plugin needs Hermes core and desktop support for a profile that runs elsewhe
 | The per-profile backend override (`host.setProfileBackend` and `host.clearProfileBackend`) | The desktop app |
 | The `access` and `network` kinds on approval cards | The desktop app |
 | On Linux: `security.fake_ip_ranges` and `terminal.env_passthrough` read from the managed scope | Hermes core. See [Programs inside the sandbox](inside-the-sandbox.md#linux-web-tools-and-execute_code). |
+| Optional Relay receipts: the `llm_http_response` observer hook | Hermes core; in-process plugins only |
 
 How to get a Hermes build that has them is in
 [Install](install.md#get-a-hermes-build-with-sandbox-support).
