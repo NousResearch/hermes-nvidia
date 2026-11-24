@@ -23,57 +23,53 @@ Finish the setup for your system before you go on:
 
 ## Get a Hermes build with sandbox support
 
-The plugin needs changes in Hermes core and in the desktop app that are still in review.
-Until they are released, install Hermes from the `beta/openshell` branch of hermes-agent.
-That branch is `main` plus those changes.
+Until a published Hermes release has the changes the plugin needs, Hermes must be on its `main`
+channel. The default channel is `stable`, the latest published release. `main` follows every commit.
 
-> [!NOTE]
-> The `beta/openshell` branch is not published yet. Until it is, the commands in this section fail.
-
-### Install Hermes from the branch
+### Install Hermes on the main channel
 
 Windows (PowerShell):
 
 ```powershell
-& ([scriptblock]::Create((irm https://hermes-agent.nousresearch.com/install.ps1))) -Branch beta/openshell -IncludeDesktop
+& ([scriptblock]::Create((irm https://hermes-agent.nousresearch.com/install.ps1))) -Channel main -IncludeDesktop
 ```
 
 If PowerShell answers `The assignment expression is not valid`, run the installer from a file:
 
 ```powershell
 irm https://hermes-agent.nousresearch.com/install.ps1 -OutFile "$env:TEMP\hermes-install.ps1"
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\hermes-install.ps1" -Branch beta/openshell -IncludeDesktop
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\hermes-install.ps1" -Channel main -IncludeDesktop
 ```
 
 Linux:
 
 ```bash
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --branch beta/openshell --include-desktop
+curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --channel main --include-desktop
 ```
 
 Leave out `--include-desktop` on a machine without a desktop session.
 
-### Move an existing install to the branch
-
-Rerunning the installer keeps an existing checkout on its update channel.
-Move it with Hermes itself, then build the desktop from it:
+### Move an existing install to the main channel
 
 ```bash
-hermes update --branch beta/openshell
+hermes update --set-channel main
+hermes update
 hermes desktop
 ```
 
-### Check the build and stay on it
+- `--set-channel` saves the channel for this install. It does not update.
+- The `hermes update` after it moves Hermes to `main`.
+- `hermes desktop` builds the desktop app from this install and starts it.
+
+### Check the build
 
 1. Open a new terminal and run `hermes --version`.
 2. Use the desktop that `hermes desktop` (or `-IncludeDesktop`) builds from this install.
-   A Hermes Desktop download from the website or the Microsoft Store doesn't have the sandbox
-   support yet.
-3. When you update, stay on the branch: run `hermes update --branch beta/openshell`.
+   A Hermes Desktop download from the website or the Microsoft Store does not have the sandbox
+   support until a published release includes it.
 
-> [!WARNING]
-> A plain `hermes update`, or the desktop's update prompt, moves Hermes back to the regular release.
-> The regular release can't run the plugin.
+The installer and `--set-channel` both save the channel.
+A later `hermes update` stays on `main`.
 
 What the plugin calls in Hermes is listed in
 [Development](development.md#what-the-plugin-needs-from-hermes).
@@ -191,7 +187,7 @@ See [Telemetry](security.md#telemetry).
 
 | What | Command |
 |---|---|
-| Hermes | `hermes update --branch beta/openshell` |
+| Hermes | `hermes update` |
 | The plugin | The install command from [Install the plugin](#install-the-plugin), with `--force` added |
 | OpenShell | Nothing to run. After a plugin update that changes the pinned build, the new build is installed the next time a sandbox starts. |
 
@@ -217,5 +213,5 @@ runs on it. Sandboxes that are running keep the build they started with until th
 6. Windows: remove what [Set up Windows](setup-windows.md#remove-the-windows-prerequisites) lists.
 7. Linux: remove the images if you don't need them. See
    [Set up Linux](setup-linux.md#remove-the-images).
-8. Leave the beta branch: `hermes update --branch main`.
-   Later updates follow your usual channel again.
+8. Optional: put Hermes back on its `stable` channel with `hermes update --set-channel stable`.
+   Later updates then follow published releases.
