@@ -103,6 +103,32 @@ See [Set up Windows](setup-windows.md#use-a-copy-of-your-own).
 
 ## Telemetry
 
+### Relay response receipts
+
+To link native model calls to OpenShell's HTTP records, enable receipts in the profile's
+`config.yaml`:
+
+```yaml
+plugins:
+  enabled: [openshell]
+  entries:
+    openshell:
+      settings:
+        relay_receipts: true
+```
+
+Requires Hermes's `llm_http_response` hook and a compatible Relay build. The version bundled
+with Hermes may not yet have the required APIs; the plugin warns and skips capture if they
+are missing. This works inside the sandbox with in-process plugins, not plugin-host isolation.
+
+Receipts contain only the request ID and HTTP status, not other headers, bodies, prompts or
+credentials. Use Relay's `full` or `openinference` export mode to retain them. The plugin does
+not configure exporters or open network destinations.
+
+A receipt means response headers arrived, not that a stream completed or a policy allowed
+the request. It is not an authorization token. Tool-subprocess requests are not covered.
+Capture is off by default; a recording failure does not change the model request's result.
+
 ### OpenShell's usage telemetry is off
 
 OpenShell sends anonymous usage counts to NVIDIA unless it is told not to.

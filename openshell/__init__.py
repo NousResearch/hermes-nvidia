@@ -11,9 +11,10 @@ OpenShell's proxy (``loopback_env.py``).
 
 
 def register(ctx):
-    from . import busybox_env, launcher_cli, loopback_env, sandbox_hook
+    from . import busybox_env, launcher_cli, loopback_env, relay_receipts, sandbox_hook
 
     loopback_env.apply()
     ctx.register_terminal_environment_provider(busybox_env.BusyboxProvider())
     launcher_cli.register(ctx)
     sandbox_hook.register(ctx)
+    relay_receipts.register(ctx)
