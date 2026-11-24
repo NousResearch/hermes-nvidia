@@ -114,6 +114,11 @@ ref=$(git ls-remote https://github.com/NousResearch/hermes-nvidia refs/heads/fea
 hermes -p sbtest plugins install NousResearch/hermes-nvidia/openshell --ref "$ref" --enable
 ```
 
+The plugin is not in the Hermes catalog, so the command first prints
+`Warning: custom (unreviewed) source — not from the Hermes catalog.`
+The first install in a new Hermes root takes about a minute, because Hermes sets up its plugin
+environment before it installs.
+
 The plugin has two halves, and both must be on:
 
 1. **The Python half.** `--enable` turns it on for the profile.
@@ -133,6 +138,9 @@ hermes -p sbtest sandbox check
 | `"ok": true` | This computer can run the sandbox. Otherwise `"reason"` is the one reason it can't, and `"action"` says what to do about it. |
 | `"ready"` | Whether the switch would turn on for this profile now. |
 | `"switch_refused"` | The reason, when `"ready"` is `false`. The exit status is then 2. |
+
+A profile that has no model yet also answers `"ready": true`.
+Set up the model before the first chat: see [Choose a profile](#choose-a-profile).
 
 The other fields and exit statuses are in the [command reference](cli.md#check).
 What each reason means is in [Troubleshooting](troubleshooting.md#the-switch-does-not-turn-on).
