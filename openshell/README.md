@@ -50,9 +50,10 @@ The plugin is in beta. Its limits and open problems are in [Known issues](docs/k
    hermes -p sbtest sandbox off
    ```
 
-Step 2 in PowerShell, and the desktop half that the Sandbox page needs, are in
-[Install the plugin](docs/install.md#install-the-plugin). Then follow
-[Use the sandbox](docs/using.md).
+Step 2 in PowerShell is in [Install the plugin](docs/install.md#install-the-plugin).
+For the desktop's Sandbox page, also
+[turn on the plugin in the desktop](docs/install.md#turn-on-the-plugin-in-the-desktop).
+Then follow [Use the sandbox](docs/using.md).
 
 ## How it works
 

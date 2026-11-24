@@ -6,6 +6,15 @@ The sandbox runs in Docker, through OpenShell's Docker driver.
 It needs x86_64 or aarch64 with glibc, Linux 6.2 or newer (Landlock ABI 3) and seccomp user
 notification.
 
+## Install curl and git
+
+The commands on these pages use `curl` and `git`.
+Install them if the system does not have them. On Ubuntu or Debian:
+
+```bash
+sudo apt update && sudo apt install -y curl git
+```
+
 ## Check the kernel
 
 ```bash

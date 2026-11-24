@@ -3,6 +3,20 @@
 This page takes you from a computer without the plugin to a profile that is ready to switch on,
 and back again.
 
+## The steps
+
+Do these in order. Each one links to its section.
+
+1. [Set up your system](#supported-platforms): the Windows version, or Docker on Linux.
+2. [Install Hermes on its main channel](#get-a-hermes-build-with-sandbox-support), with the desktop.
+3. [Set up a model and create a profile](#choose-a-profile).
+4. [Install the plugin for the profile](#install-the-plugin).
+5. [Check the computer](#check-the-computer) and [install OpenShell](#install-openshell).
+6. [Turn on the plugin in the desktop](#turn-on-the-plugin-in-the-desktop).
+7. [Turn the sandbox on](using.md#turn-the-sandbox-on).
+
+Steps 2 to 5 are typed in a terminal. Steps 6 and 7 are done in the desktop app.
+
 The `hermes` commands on these pages are the same in PowerShell and in a Linux shell.
 Commands that differ are shown once for each.
 
@@ -71,6 +85,9 @@ hermes desktop
 The installer and `--set-channel` both save the channel.
 A later `hermes update` stays on `main`.
 
+If the Sandbox page or `hermes sandbox check` says "Needs a newer version of Hermes.", run
+`hermes update`.
+
 What the plugin calls in Hermes is listed in
 [Development](development.md#what-the-plugin-needs-from-hermes).
 
@@ -78,16 +95,22 @@ What the plugin calls in Hermes is listed in
 
 The switch does not turn on for the default profile yet. Use another profile.
 
-Create one with a working model:
+1. On a new Hermes install, set up a model first:
 
-```bash
-hermes profile create sbtest --clone
-hermes -p sbtest -z "say hi"
-```
+   ```bash
+   hermes setup
+   ```
+
+2. Create a profile and check that its model answers:
+
+   ```bash
+   hermes profile create sbtest --clone
+   hermes -p sbtest -z "say hi"
+   ```
 
 - `--clone` copies the active profile's model settings and keys.
-- On a new install, set up a model first with `hermes setup`.
 - Hermes needs a model context of at least 64K tokens.
+- The commands on these pages use `sbtest` as the profile's name.
 
 The model can use an API key stored in the profile's `.env`, a provider the profile is signed in
 to, or a model server on this computer.
@@ -119,13 +142,10 @@ The plugin is not in the Hermes catalog, so the command first prints
 The first install in a new Hermes root takes about a minute, because Hermes sets up its plugin
 environment before it installs.
 
-The plugin has two halves, and both must be on:
-
-1. **The Python half.** `--enable` turns it on for the profile.
-   It adds `openshell` to `plugins.enabled` in the profile's `config.yaml`.
-2. **The desktop half.** Start the desktop (`hermes desktop`) and go to Capabilities > Plugins.
-   Search for `openshell`, open **OpenShell** and turn on **Desktop: OpenShell**.
-   **Sandbox** then appears in the sidebar.
+`--enable` turns the plugin on for the profile: it adds `openshell` to `plugins.enabled` in the
+profile's `config.yaml`.
+The plugin's page in the desktop app is turned on separately, in
+[Turn on the plugin in the desktop](#turn-on-the-plugin-in-the-desktop).
 
 ## Check the computer
 
@@ -190,6 +210,25 @@ Notes for Windows:
 
 OpenShell's own usage telemetry is turned off for every OpenShell program the plugin starts.
 See [Telemetry](security.md#telemetry).
+
+## Turn on the plugin in the desktop
+
+The Sandbox page belongs to the desktop app. It is turned on once for the app, whichever profile
+the window shows.
+
+1. Start the desktop:
+
+   ```bash
+   hermes desktop
+   ```
+
+2. Go to **Capabilities** > **Plugins**.
+3. Type `openshell` in the search box, or choose **Filters** > **Installed**.
+4. Open **OpenShell** and turn on **Desktop: OpenShell**.
+   **Sandbox** appears in the sidebar.
+
+Then select the profile in the profile rail and turn the sandbox on:
+[Use the sandbox](using.md#turn-the-sandbox-on).
 
 ## Update
 

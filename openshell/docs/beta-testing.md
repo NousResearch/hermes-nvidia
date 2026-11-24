@@ -5,12 +5,8 @@ what to try, and how to report what you find.
 
 ## Get set up
 
-1. Check that your system is supported and finish its setup:
-   [Set up Windows](setup-windows.md) or [Set up Linux](setup-linux.md).
-2. Get a Hermes build with sandbox support:
-   [Install](install.md#get-a-hermes-build-with-sandbox-support).
-3. Create a profile and install the plugin: [Install](install.md#choose-a-profile).
-4. Check the computer and install OpenShell: [Install](install.md#check-the-computer).
+Follow [the steps on the Install page](install.md#the-steps) in order, from the setup for your
+system to the first switch-on.
 
 ## What to try
 
