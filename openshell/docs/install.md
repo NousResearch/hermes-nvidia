@@ -124,7 +124,7 @@ The plugin has two halves, and both must be on:
 1. **The Python half.** `--enable` turns it on for the profile.
    It adds `openshell` to `plugins.enabled` in the profile's `config.yaml`.
 2. **The desktop half.** Start the desktop (`hermes desktop`) and go to Capabilities > Plugins.
-   Search for `openshell`, open **Sandbox** and turn on **Desktop: Sandbox**.
+   Search for `openshell`, open **OpenShell** and turn on **Desktop: OpenShell**.
    **Sandbox** then appears in the sidebar.
 
 ## Check the computer
@@ -214,7 +214,7 @@ runs on it. Sandboxes that are running keep the build they started with until th
    hermes -p sbtest sandbox runtime remove
    ```
 
-3. Turn off **Desktop: Sandbox** in Capabilities > Plugins.
+3. Turn off **Desktop: OpenShell** in Capabilities > Plugins.
 4. Remove the plugin: `hermes -p <profile> plugins remove openshell`.
 5. Optional: delete `openshell/<profile>/` in the Hermes data folder. It holds the saved folders,
    sites and card log. Delete the profile itself with `hermes profile delete sbtest`.

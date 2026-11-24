@@ -3031,7 +3031,7 @@ export const __test__ = {
 
 export default {
   id: 'openshell',
-  name: 'Sandbox',
+  name: 'OpenShell',
   register(ctx) {
     rest = ctx.rest
     osApi = ctx.os || null
