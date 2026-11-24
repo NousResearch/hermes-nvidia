@@ -368,6 +368,30 @@ def test_carve_keeps_every_grant_outside_the_deny_list(tmp_path):
     assert tmp_path / "elsewhere" in deny and not notes
 
 
+def test_a_named_profiles_install_state_is_hidden_around_its_environment(tmp_path):
+    """A named profile's grants do not cover the Hermes root, so the install state lies outside every grant
+    with the selected environment granted inside it. Hermes in the sandbox reads ``facts.json`` there at boot:
+    a file that is absent lets it start on its own packages, a file it may not open ends it."""
+    root = tmp_path / "root"
+    state = root / "installs" / "key1"
+    home = root / "profiles" / "work"
+    box = root / "openshell" / "work" / "box" / "tmp"
+    for d in (state / "environments" / "env1" / "venv", state / "environments" / "old", state / "leases",
+              state / "pm-runtime" / "generations" / "g1", home, box):
+        d.mkdir(parents=True)
+    for f in (state / "facts.json", state / ".install.lock"):
+        f.write_text("x", encoding="utf-8")
+    ro = [state / "environments" / "env1"]
+    deny, extra_ro, notes = W.carve_denials([state], ro, [home, box])
+    keys = {os.path.normcase(str(p)) for p in deny}
+    for hidden in (state / "facts.json", state / ".install.lock", state / "leases", state / "pm-runtime",
+                   state / "environments" / "old"):
+        assert os.path.normcase(str(hidden)) in keys, hidden
+    assert not any(W._inside(ro[0], d) for d in deny)  # the environment itself stays readable
+    assert os.path.normcase(str(state)) not in keys  # MXC refuses a denied path that contains a grant
+    assert not extra_ro and not notes  # nothing in it sits in a read & write grant
+
+
 def test_launch_policy_hides_credentials_names_native_binaries_and_enables_the_ui(tmp_path):
     layout, runtime, cfg, bb = _tree(tmp_path)
     grants = L.profile_grants(layout, runtime, [])

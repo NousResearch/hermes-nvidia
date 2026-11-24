@@ -180,9 +180,10 @@ def carve_denials(denied, readonly, readwrite, keep=()) -> tuple[list[Path], lis
             deny.append(path)
         elif any(_key(g) == _key(path) for g in inner):
             notes.append(f"{path} is both granted and denied; the grant stands")
-        elif not any(_inside(path, g) for g in grants):
-            notes.append(f"{path} lies outside every grant (unreachable); only its granted parts are mapped")
         else:
+            # Also when the path lies outside every grant (a named profile's install state, with the selected
+            # environment granted inside it): what no grant reaches is still there, unreadable, and Hermes in
+            # the sandbox ends at boot on an install state it may not open. Hidden, it reads as absent.
             carve(path, inner)
     return _dedupe(deny), _dedupe(extra_ro), notes
 
