@@ -60,10 +60,9 @@ because the sandboxed backend wrote it. Keep it.
 
 Only what the sandbox can write is compared:
 
-- The `plugins` and `desktop-plugins` folders are read-only inside the sandbox. A plugin you
-  update while the sandbox is on, and the bytecode Python writes beside a plugin's files, are
-  therefore never listed.
-- Bytecode in a folder the sandbox can write, such as `scripts/__pycache__`, is listed.
+- The `plugins` and `desktop-plugins` folders are read-only inside the sandbox, so a plugin you
+  update while the sandbox is on is never listed.
+- Python bytecode in a folder the sandbox can write, such as `scripts/__pycache__`, is listed.
 
 If the comparison cannot run, the sandbox still turns off, and the page says that the changes
 were not reviewed.

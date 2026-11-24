@@ -15,7 +15,7 @@ The switch refuses the default profile. Use another profile.
 
 ### Smart App Control (Windows)
 
-The plugin has not been run with Smart App Control on.
+The plugin is not tested with Smart App Control on.
 
 Hermes itself has open reports of Smart App Control blocking parts of a source install:
 [hermes-agent#148950](https://github.com/NousResearch/hermes-agent/issues/148950),
@@ -163,11 +163,10 @@ See [Provider sign-ins](sign-ins.md#sign-in-with-the-sandbox-off).
 
 ### A reply that is streaming when a sign-in must be renewed
 
-The launcher renews a sign-in between replies. If replies stream until shortly before the token
-expires, the renewal cuts the reply that is streaming. Hermes asks the model again by itself, and
-the chat shows no error.
+The launcher renews a sign-in between replies. On Linux, if replies stream until shortly before
+the token expires, the renewal cuts the reply that is streaming. Hermes asks the model again by
+itself, and the chat shows no error.
 
-This is what OpenShell does on Linux.
 See [Sign-in renewal](sign-in-renewal.md#a-reply-that-is-streaming-when-a-renewal-is-due).
 
 ### A sign-in that the provider no longer renews

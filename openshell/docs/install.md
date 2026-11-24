@@ -77,7 +77,7 @@ hermes desktop
 
 ### Check the build
 
-1. Open a new terminal and run `hermes --version`.
+1. Open a new terminal, so that it finds the `hermes` command, and run `hermes --version`.
 2. Use the desktop that `hermes desktop` (or `-IncludeDesktop`) builds from this install.
    A Hermes Desktop download from the website or the Microsoft Store does not have the sandbox
    support until a published release includes it.
@@ -87,9 +87,6 @@ A later `hermes update` stays on `main`.
 
 If the Sandbox page or `hermes sandbox check` says "Needs a newer version of Hermes.", run
 `hermes update`.
-
-What the plugin calls in Hermes is listed in
-[Development](development.md#what-the-plugin-needs-from-hermes).
 
 ## Choose a profile
 
@@ -202,8 +199,6 @@ Notes for Windows:
   See [Set up Windows](setup-windows.md#mxc-and-the-sandboxs-shell).
 - The plugin installs the package for the PC's own architecture, also when Hermes runs an
   emulated x64 Python on an Arm64 PC.
-- The package prints version 0.1.9 but is built from OpenShell's `windows` branch, so it isn't the
-  same code as OpenShell 0.1.9 on Linux.
 - To install from a folder that already holds the four programs, use
   `hermes sandbox runtime install --build-dir <dir>` or set `HERMES_OPENSHELL_BUILD_DIR`.
   The same checks apply.

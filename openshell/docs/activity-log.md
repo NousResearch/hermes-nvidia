@@ -10,9 +10,6 @@ allowed and refused, and has:
 - the enforcer's policy history, with Restore;
 - an export of the rows shown as OCSF JSON Lines (**Export OCSF JSON…**).
 
-Code: `launcher/activity.py` (backend), the `-- activity --` block in `desktop/plugin.js` (page),
-`tests/test_activity.py`.
-
 ## Sources
 
 | Rows | Source | Where it is kept (host only) |
@@ -20,9 +17,10 @@ Code: `launcher/activity.py` (backend), the `-- activity --` block in `desktop/p
 | Network: connections and HTTP requests (allowed, denied), policy loads, findings | OpenShell's audit (OCSF) | `<root>/openshell/<profile>/audit/ocsf-<sandbox>-<UTC date>.jsonl` |
 | Files: refused reads and writes, and the file tools' writes | Hermes's tool results in the profile's `state.db` (read-only), only while the sandbox ran | read in place; run times in `<state>/activity/runs.jsonl` |
 | Decisions: answers to the in-chat access cards, their outcome, removed grants | the launcher's card log | `<state>/cards.jsonl` |
-| Sandbox started / stopped | the collector | `<state>/activity/runs.jsonl` |
+| Sandbox started / stopped | the launcher | `<state>/activity/runs.jsonl` |
 
-`<state>` is the launcher's state dir, which the sandbox cannot read or write.
+`<root>` is the Hermes data folder. `<state>` is `<root>/openshell/<profile>`, the launcher's
+state folder, which the sandbox cannot read or write.
 
 OpenShell logs no per-file events, so file rows come from what the agent's own tools reported.
 A file the agent changed through the terminal (for example `echo > f`) shows only if a refusal
@@ -32,12 +30,11 @@ was reported.
 
 The audit log is kept on the host, so it stays readable after the sandbox stops.
 
-**Linux.** The driver's `AuditArchive` follows the supervisor's `OCSF-JSON` stderr records and
-writes the archive itself. The records are full OpenShell records, verbatim.
+**Linux.** The driver follows the supervisor's OCSF JSON records and writes the archive itself.
+The records are full OpenShell records, verbatim.
 
-**Windows.** OpenShell saves nothing. `openshell logs` is the gateway's in-memory tail (shorthand
-lines only; the full JSON records go only to the gateway's own stdout), and the supervisor writes
-no file on the host. So the launcher's `AuditCollector` does this:
+**Windows.** The supervisor writes no file on the host, and `openshell logs` returns the
+gateway's in-memory tail as shorthand lines. So the launcher collects the records itself:
 
 1. It polls the driver's events every 3 s while the sandbox runs.
    It also polls before answering the page when the last poll is older than 1.5 s.

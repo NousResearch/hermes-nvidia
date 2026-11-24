@@ -94,9 +94,6 @@ Its files are in `openshell/runtime/gateway/` in the Hermes data folder:
 | How credential files are hidden | MXC denied paths | Empty read-only mounts |
 | How the audit is kept | The launcher polls the driver's events | The driver follows the supervisor's records |
 
-The plugin reads what a Windows build of OpenShell can do from the `features` list of its pin,
-never from the version number. See [Development](development.md#change-a-pin).
-
 ## Inside the sandbox
 
 | Piece | File | What it does |
@@ -121,9 +118,9 @@ profile is signed in to a provider the sandbox can use. See [Provider sign-ins](
 - Every hidden path sits directly under a folder the sandbox cannot rename.
 - The launcher refuses to start while a credential file exists below a folder the sandbox writes,
   because renaming that folder would expose the file.
-- Earlier Hermes releases kept copies of the secret-manager caches in `cache` and `runtime`.
-  When the installed Hermes keeps them at the top of the profile folder, the launcher deletes
-  those old copies before the sandbox starts.
+- When Hermes keeps its secret-manager caches at the top of the profile folder, the launcher
+  deletes copies of them left in the profile's `cache` and `runtime` folders before the sandbox
+  starts.
 
 ### On Linux
 

@@ -16,8 +16,8 @@ It then hands the current token to OpenShell.
 
 ## A reply that is streaming when a renewal is due
 
-OpenShell closes the sandbox's open connections whenever a credential's value is replaced.
-The launcher therefore renews between replies.
+On Linux, OpenShell closes the sandbox's open connections whenever a credential's value is
+replaced. The launcher therefore renews between replies.
 
 When replies stream from the moment a renewal is due until shortly before the token expires, the
 value is replaced anyway:
@@ -30,8 +30,6 @@ value is replaced anyway:
 - So when one value has to go in under a streaming reply, the launcher renews every other sign-in
   that is due first and hands their values over together.
   The reply starts again twice at most, however many sign-ins are due.
-
-This is what OpenShell does on Linux.
 
 ## How often the launcher asks a provider
 

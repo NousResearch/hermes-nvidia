@@ -63,11 +63,6 @@ The agent waits for your answer.
 Details:
 
 - A host name alone never raises a card. OpenShell's own record must show the site refused.
-- A command that did not fail is judged by OpenShell's record. What it printed does not decide.
-- The launcher follows OpenShell's records as they happen. A command that names a site waits a
-  fraction of a second for a record after it returns, and two seconds at most when its output
-  shows a refusal.
-- A command that names no site is never made to wait.
 - If nobody answers in time, the agent says what it needs and stops.
   An answer given later continues the reply.
 
@@ -96,11 +91,10 @@ What you see meanwhile:
 - While the launcher holds the turn, the desktop shows the reply as continuing.
   A message you send meanwhile is kept until the continuation has run.
 - The chat continues whichever page of the window is open, and whether or not the window has
-  focus. The launcher resumes the chat on that window's connection.
+  focus.
 - With no window connected for two minutes, the reply cannot go on.
   The chat then says "This reply stopped when the sandbox restarted. Send your message again."
   when it is next opened. The approval stands, so sending the request again raises no second card.
-  The note for the agent goes with that message.
 
 ## See and remove what you allowed
 

@@ -111,11 +111,8 @@ The Sandbox page lists everything the running sandbox may reach:
 | **Providers** | The profile's providers and what each does in the sandbox |
 
 - The page's header counts the addresses a sign-in or a key is used at together with your own.
-- A model's address that is listed among the allowed destinations has no second row above the
-  list.
 - The open page follows what the launcher changes by itself (a card answered in a chat, a removal,
   a restart, a renewed sign-in) within a few seconds.
-  It does so also in a window that is covered, minimized or without focus.
 
 ## Services on this computer (Windows)
 
