@@ -105,6 +105,7 @@ The plugin needs Hermes core and desktop support for a profile that runs elsewhe
 | The per-profile backend override (`host.setProfileBackend` and `host.clearProfileBackend`) | The desktop app |
 | The `access` and `network` kinds on approval cards | The desktop app |
 | On Linux: `security.fake_ip_ranges` and `terminal.env_passthrough` read from the managed scope | Hermes core. See [Programs inside the sandbox](inside-the-sandbox.md#linux-web-tools-and-execute_code). |
+| On Windows: `HERMES_INSTALL_STATE_DIR`, which names the folder Hermes in the sandbox keeps its install state in | Hermes core |
 
 How to get a Hermes build that has them is in
 [Install](install.md#get-a-hermes-build-with-sandbox-support).

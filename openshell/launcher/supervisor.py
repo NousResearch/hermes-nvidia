@@ -16,8 +16,8 @@ from . import pins as key_pins
 from . import provider_rows, settings_view, standins
 from . import usage_data
 from .driver import LaunchRequest, SandboxDriver
-from .layout import (ProfileLayout, Runtime, box_dirs, fresh_shared_sign_in_dir, hide_note, listed_names,
-                     new_private_entries, profile_grants)
+from .layout import (ProfileLayout, Runtime, box_dirs, fresh_install_state_dir, fresh_shared_sign_in_dir, hide_note,
+                     listed_names, new_private_entries, profile_grants)
 from .managed import write_managed_scope
 from .proxy import Upstream
 from .settings_view import saved_policy
@@ -186,6 +186,18 @@ class Supervisor:
             raise SandboxStartError("the sandbox's sign-in folder of its own could not be emptied "
                                     f"({exc.strerror or exc}: {exc.filename})") from exc
         self._grants.readwrite.append(shared_sign_in)
+        install_state = None
+        if self.driver.uses_host_shell:
+            # The host's own interpreter runs inside, so the install's state folder is an ancestor of the
+            # environment the sandbox reads: Hermes inside sees it, can neither read nor lock it, and ends at
+            # start. It is named a folder of its own, empty at every start (a driver that builds the sandbox's
+            # file system itself puts an empty folder over the state there).
+            try:
+                install_state = fresh_install_state_dir(self.layout)
+            except OSError as exc:
+                raise SandboxStartError("the sandbox's install-state folder of its own could not be emptied "
+                                        f"({exc.strerror or exc}: {exc.filename})") from exc
+            self._grants.readwrite.append(install_state)
         self._inner_port, self._inner_token = free_loopback_port(), secrets.token_urlsafe(32)
         # The profile's keys travel beside the environment, never in it: the driver decides how
         # they reach the sandbox (OpenShell: providers, placeholders inside). Keys and the endpoints they may be
@@ -213,6 +225,8 @@ class Supervisor:
         })
         if self.runtime.store is not None:
             env["HERMES_RUNTIME_DIR"] = str(self.runtime.store)
+        if install_state is not None:
+            env["HERMES_INSTALL_STATE_DIR"] = str(install_state)
         # The card hook inside (sandbox_hook.py): it relays refusals into the box's requests folder
         # (read & write, a box dir) and waits for verdicts the launcher writes into a folder the
         # sandbox may read but never write.

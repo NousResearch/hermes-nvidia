@@ -227,7 +227,26 @@ def fresh_shared_sign_in_dir(layout: ProfileLayout) -> Path:
     sign-in and reads as it does on a computer that is not signed in. The sandbox writes this folder (the lock
     file, and a copy of its stand-in sign-in when it has one), so what is in it is never followed: a link is
     taken off as a link. Raises ``OSError`` when something in it cannot be removed."""
-    folder = shared_sign_in_dir(layout)
+    return _emptied(shared_sign_in_dir(layout))
+
+
+def install_state_dir(layout: ProfileLayout) -> Path:
+    """The sandbox's own install-state folder, in its scratch. Hermes keeps an install's dependency state (the
+    record of the selected environment, locks, leases) in ``<root>/installs/<key>``. Where the host's own
+    interpreter runs inside, that folder is an ancestor of the environment the sandbox reads: Hermes inside sees
+    it, can neither read nor lock it, and ends at start. Named to Hermes inside as ``HERMES_INSTALL_STATE_DIR``,
+    this folder stands in for it, and Hermes inside runs on the interpreter it was started with."""
+    return layout.box / "install-state"
+
+
+def fresh_install_state_dir(layout: ProfileLayout) -> Path:
+    """Make ``install_state_dir`` and empty it, for a sandbox that starts. The sandbox writes this folder (its
+    lock), so what is in it is never followed. Raises ``OSError`` when something in it cannot be removed."""
+    return _emptied(install_state_dir(layout))
+
+
+def _emptied(folder: Path) -> Path:
+    """*folder*, made if need be and with nothing in it. A link in it is taken off as a link."""
     if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
         folder.unlink()
     folder.mkdir(parents=True, exist_ok=True)
