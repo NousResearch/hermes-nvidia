@@ -26,7 +26,7 @@ Commands that differ are shown once for each.
 |---|---|---|
 | Windows 11 x64 | Yes | 24H2, 25H2 or 26H2 with the September 2026 update (build 26100, 26200 or 26300 at `.9550` or later), or 26H1 (build 28000 at `.3086` or later). Windows 10 and Windows Server aren't supported. |
 | Windows 11 on Arm64 | Not yet run on hardware | Same Windows versions. Every Arm64 program must be the Arm64 build. |
-| Linux x86_64 | Yes | Linux 6.2 or newer (Landlock ABI 3), glibc, seccomp user notification, Docker, systemd. Tested on Ubuntu 24.04 in WSL2. |
+| Linux x86_64 | Yes | Linux 6.2 or newer (Landlock ABI 3), glibc, seccomp user notification, Docker, systemd. Tested on Ubuntu 26.04, and on Ubuntu 24.04 in WSL2. |
 | Linux aarch64 | Built, not yet run on hardware | Same as x86_64. |
 | macOS | No | Not supported. |
 

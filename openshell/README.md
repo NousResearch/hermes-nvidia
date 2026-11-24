@@ -15,7 +15,7 @@ The plugin is in beta. Its limits and open problems are in [Known issues](docs/k
 |---|---|---|
 | Windows 11 x64 | Microsoft MXC process containers | Tested |
 | Windows 11 on Arm64 | Microsoft MXC process containers | Not yet run on hardware |
-| Linux x86_64 | Docker | Tested on Ubuntu 24.04 in WSL2 |
+| Linux x86_64 | Docker | Tested on Ubuntu 26.04, and on Ubuntu 24.04 in WSL2 |
 | Linux aarch64 | Docker | Built, not yet run on hardware |
 | macOS | | Not supported |
 

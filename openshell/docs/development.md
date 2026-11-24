@@ -84,10 +84,8 @@ Each field is explained by a comment key beside it (`_comment`, `_version`, `_fe
 
 Facts about the Windows package that the pin records:
 
-- NVIDIA built it from OpenShell's `windows` branch. It is not built from the v0.1.9 tag: it
-  prints 0.1.9 but doesn't hold the changes OpenShell's main branch made in 0.1.6 to 0.1.9.
-- The plugin therefore reads what the Windows build can do from the pin's `features` list, never
-  from the version number.
+- The plugin reads what the Windows build can do from the pin's `features` list, never from the
+  version number.
 - The programs carry the C runtime and Z3 inside them, so the package needs no Microsoft Visual
   C++ Redistributable.
 - The release is at `github.com/ai-openshell/openshell`.
