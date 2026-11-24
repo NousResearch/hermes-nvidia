@@ -47,13 +47,6 @@ See [Troubleshooting](troubleshooting.md#the-sandbox-isnt-answering).
 The plugin starts the gateway and the sandbox again, once. A reply that was streaming is cut.
 See [Troubleshooting](troubleshooting.md#the-sandboxs-gateway-stopped).
 
-### Windows: a profile with a `.op.env`
-
-The sandbox does not start. The switch goes back to off, and the page does not say why.
-This needs a fix in Hermes itself (NousResearch/hermes-agent#157036).
-Until it is in your Hermes, move `.op.env` out of the profile folder before you turn the sandbox
-on.
-
 ### The first folder restart is slower
 
 The first restart for a folder grant in a session takes about 15 seconds longer than later ones.
