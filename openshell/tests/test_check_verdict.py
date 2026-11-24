@@ -68,6 +68,19 @@ def test_a_refused_switch_is_not_ready_says_why_and_has_its_own_exit_status(chec
     assert err == f"hermes sandbox: {said['switch_refused']}\n" and KEY not in json.dumps(said) + err
 
 
+def test_a_hermes_too_old_for_the_sandbox_is_not_ready_and_the_check_says_so(check, monkeypatch):
+    """The page and the switch refuse a Hermes that is too old. The check says the same sentence with the
+    switch's exit status; the computer itself is fine."""
+    from openshell.launcher import compat as C
+
+    monkeypatch.setattr(C, "_platform_key", lambda: "windows")
+    monkeypatch.setattr(SW, "state_folder_api", lambda: None, raising=False)
+    code, said, err = check({"model": {"provider": "openrouter", "default": "m"}}, f"OPENROUTER_API_KEY={KEY}\n")
+    assert code == 2 and said["ok"] is True and said["ready"] is False
+    assert said["switch_refused"] == "Needs a newer version of Hermes."
+    assert err == "hermes sandbox: Needs a newer version of Hermes.\n"
+
+
 def test_a_computer_that_cannot_run_the_sandbox_is_neither_and_exits_1_as_before(check):
     check.world["host"] = {**HOST_OK, "ok": False, "code": "needs_update", "reason": "Windows needs an update."}
     code, said, err = check({"model": {"provider": "openrouter", "default": "m"}}, f"OPENROUTER_API_KEY={KEY}\n")

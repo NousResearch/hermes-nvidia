@@ -184,6 +184,31 @@ def test_turn_on_refuses_marked_or_default_or_markerless_hosts(env, monkeypatch)
     assert SW.availability(env["layout"]) == {"available": False, "reason": "Needs a newer version of Hermes."}
 
 
+@pytest.mark.parametrize("platform, too_old", [("windows", True), ("linux", False)])
+def test_a_hermes_that_does_not_read_the_named_state_folder_is_too_old_on_windows(env, monkeypatch, platform, too_old):
+    """On Windows Hermes in the sandbox is named an install-state folder of its own. A Hermes that does not read
+    the name ends at start, so the switch says it is too old before it starts anything. A Linux sandbox is named
+    no folder and needs nothing."""
+    from openshell.launcher import compat as C
+
+    monkeypatch.setattr(C, "_platform_key", lambda: platform)
+    monkeypatch.setattr(SW, "state_folder_api", lambda: None, raising=False)
+    answer = SW.availability(env["layout"], check_host=False)
+    assert answer == ({"available": False, "reason": "Needs a newer version of Hermes."} if too_old
+                      else {"available": True, "reason": None})
+    if too_old:
+        with pytest.raises(SW.SwitchError, match="Needs a newer version of Hermes"):
+            _on(env)
+
+
+def test_a_hermes_that_reads_the_named_state_folder_can_switch_on_windows(env, monkeypatch):
+    from openshell.launcher import compat as C
+
+    monkeypatch.setattr(C, "_platform_key", lambda: "windows")
+    monkeypatch.setattr(SW, "state_folder_api", lambda: (lambda: None), raising=False)
+    assert SW.availability(env["layout"], check_host=False) == {"available": True, "reason": None}
+
+
 def test_tickets_are_single_use_and_expire():
     now = [0.0]
     tickets = SW.Tickets(ttl=10, clock=lambda: now[0])

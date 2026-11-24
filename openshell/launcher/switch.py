@@ -168,11 +168,29 @@ def marker_api():
     return profiles_run_elsewhere
 
 
+def state_folder_api():
+    """Core's reader of the install-state folder a launcher names for its process
+    (``pm.environments.named_install_state_dir``), or None on a Hermes without it."""
+    try:
+        from pm import environments
+    except ImportError:
+        return None
+    return getattr(environments, "named_install_state_dir", None)
+
+
+def _hermes_too_old() -> bool:
+    """On Windows the host's own interpreter runs in the sandbox, and the supervisor names Hermes inside an
+    install-state folder of its own. A Hermes that does not read the name ends at start there."""
+    from . import compat
+
+    return marker_api() is None or (compat._platform_key() == "windows" and state_folder_api() is None)
+
+
 def availability(layout, *, check_host: bool = True, refresh: bool = False) -> dict:
     """Whether this host can flip the switch for *layout*, and if not, why (page copy). With
     ``check_host`` it includes the host compatibility check (compat.py, cached; ``refresh`` re-runs
     it): an incompatible computer answers its one reason and action, and ``host`` carries the verdict."""
-    if marker_api() is None:
+    if _hermes_too_old():
         return {"available": False, "reason": "Needs a newer version of Hermes."}
     if layout.name == "default":
         return {"available": False, "reason": "Not available for the default profile yet."}

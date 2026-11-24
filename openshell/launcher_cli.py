@@ -538,7 +538,7 @@ def _cmd_check(args) -> int:
     model without a key). Exit status: 0 ready, 1 this computer cannot run the sandbox, 2 it can but the switch
     is refused for this profile."""
     from .launcher.layout import LayoutError, current_profile
-    from .launcher.switch import host_check
+    from .launcher.switch import availability, host_check
 
     try:
         layout = current_profile()
@@ -563,6 +563,10 @@ def _cmd_check(args) -> int:
             extra = {"providers": rows}
         except Exception as exc:
             extra = {"providers": [], "providers_error": str(exc)}
+        # What the page says before it looks at the providers: a Hermes that is too old, the default profile.
+        switch = availability(layout, check_host=False)
+        if not switch["available"]:
+            refused = switch["reason"]
     result = {"ok": result["ok"], "ready": bool(result["ok"]) and refused is None,
               **{name: value for name, value in result.items() if name != "ok"}, **extra,
               **_windows_programs(layout.root, layout),
