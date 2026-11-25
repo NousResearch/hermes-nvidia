@@ -118,6 +118,23 @@ def test_dashboard_capabilities_are_the_openshell_windows_drivers_on_windows(mon
     assert caps["egress_allow_all"] is False and caps["audit_events"] is True
 
 
+@pytest.mark.parametrize("os_name, label", [("nt", "OpenShell sandbox (Windows)"), ("posix", "OpenShell sandbox")])
+def test_the_page_is_told_that_no_shipped_driver_has_all_internet_access(monkeypatch, os_name, label):
+    """The Sandbox page offers all-internet access only where the driver has a rule for it: both answers the
+    page reads for a profile that is off say that this driver has none."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    api = _plugin_api()
+    monkeypatch.setattr(api, "os", types.SimpleNamespace(name=os_name))
+    app = FastAPI()
+    app.include_router(api.router, prefix="/api/plugins/openshell")
+    client = TestClient(app)
+    for path in ("status", "config"):
+        caps = client.get(f"/api/plugins/openshell/{path}").json()["capabilities"]
+        assert caps["label"] == label and caps["egress_allow_all"] is False, path
+
+
 def test_dashboard_status_reports_the_openshell_windows_driver(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

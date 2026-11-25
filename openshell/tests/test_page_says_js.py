@@ -76,6 +76,45 @@ def test_a_saved_key_gets_one_line_for_what_it_means_in_the_sandbox(run):  # noq
     assert all(text.startswith("Saved. ") and len(text) < 80 for text in key["copy"].values())
 
 
+def _internet(run):  # noqa: F811
+    found = run["internet"]
+    assert "error" not in found, found.get("error")
+    return found
+
+
+def _edit(egress):
+    return {"path": "/network", "method": "PUT", "body": {"egress": egress, "allow": [{"host": "pypi.org", "port": 443}]}}
+
+
+def test_a_sandbox_without_a_rule_for_all_internet_access_offers_no_such_choice(run):  # noqa: F811
+    row = _internet(run)["noRule"]
+    assert row["shown"] == "Blocked" and row["choices"] == []  # said, with nothing to choose
+    assert row["note"] == "Only allowed destinations are reachable."
+    assert row["asked"] == [] and row["sent"] == []
+    assert row["addDestination"] == 1  # a site is opened with Add destination…
+
+
+def test_a_sandbox_with_the_rule_offers_all_internet_access_behind_its_confirm(run):  # noqa: F811
+    confirm = {"title": "Allow internet access?", "confirm": "Allow",
+               "body": "The sandbox will be able to connect to any address on the internet."}
+    # the driver says it has the rule, does not say, or the launcher sends no capabilities at all
+    for case in ("hasRule", "doesNotSay", "olderLauncher"):
+        row = _internet(run)[case]
+        assert row["shown"] == "Blocked" and row["choices"] == ["Blocked", "Allowed"], case
+        assert row["note"] is None, case
+        assert row["asked"] == [confirm] and row["sent"] == [_edit("allow")], case
+    back = _internet(run)["hasRuleSavedAllowed"]
+    assert back["shown"] == "Allowed" and back["note"] is None
+    assert back["asked"] == [] and back["sent"] == [_edit("deny")]
+
+
+def test_a_saved_setting_the_sandbox_cannot_grant_is_said_and_can_only_be_set_back(run):  # noqa: F811
+    row = _internet(run)["noRuleSavedAllowed"]
+    assert row["shown"] == "Allowed"  # what is saved, as it is saved
+    assert row["note"] == "This sandbox has no rule for all internet access. Set it to Blocked."
+    assert row["asked"] == [] and row["sent"] == [_edit("deny")]  # the one edit the row makes
+
+
 def test_a_second_refusal_of_the_switch_replaces_the_first(run):  # noqa: F811
     refusals = _says(run)["refusals"]
     assert [r["message"] for r in refusals] == [

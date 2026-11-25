@@ -47,6 +47,8 @@ from .layout import LayoutError, ProfileLayout, validate_folder
 
 _ACCESS = ("ro", "rw")
 _EGRESS = ("deny", "allow")
+# The refusal of "all internet" for a driver that has no such rule, wherever the setting is made.
+NO_ALL_INTERNET = "This sandbox has no rule for all internet access; add the websites it needs."
 MAX_FOLDERS = 32
 MAX_ALLOWS = 64
 _LABEL_RE = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
@@ -294,7 +296,7 @@ def network_from_body(body, *, host_loopback: str = "unknown", rules=("cidr",), 
     if egress not in _EGRESS:
         raise LayoutError("Internet access must be deny or allow.")
     if egress == "allow" and not allow_all:
-        raise LayoutError("This sandbox has no rule for all internet access; add the websites it needs.")
+        raise LayoutError(NO_ALL_INTERNET)
     entries = body.get("allow", [])
     if not isinstance(entries, list):
         raise LayoutError("allow must be a list.")

@@ -333,6 +333,15 @@ def test_website_rules_are_validated_and_only_where_the_driver_filters_by_name()
         network_from_body({"egress": "allow", "allow": []}, rules=rules, allow_all=False)
 
 
+def test_the_page_is_told_the_driver_has_no_rule_for_all_internet_access(tmp_path, monkeypatch):
+    """Both answers the Sandbox page reads while the sandbox is on say it, so the page offers no such choice."""
+    sup, _api, _rec, _layout_ = _supervisor(tmp_path, monkeypatch)
+    routes = HostRoutes(sup, lambda: None)
+    for path in ("status", "config"):
+        status, payload, _ = _route(routes, "GET", path)
+        assert status == 200 and payload["capabilities"]["egress_allow_all"] is False, path
+
+
 def test_ocsf_shorthand_lines_become_structured_events():
     event = OD.parse_event({"time": 5.0, "level": "OCSF", "source": "sandbox", "fields": {"dst_host": "example.com"},
                             "message": "NET:OPEN [MED] DENIED /usr/bin/curl(64) -> example.com:443 "

@@ -1643,6 +1643,43 @@ try {
   out.categories.error = String(error && error.stack ? error.stack : error)
 }
 
+// -- internet access: all of the internet is a choice only where the sandbox's driver has a rule for it --------
+out.internet = {}
+try {
+  const internetRow = (capabilities, egress = 'deny') => {
+    const sent = []
+    const asked = []
+    const push = (...args) => sent.push(args)
+    const config = { network: { egress, allow: [pypi] }, endpoints: [], ...(capabilities === undefined ? {} : { capabilities }) }
+    const tree = P.NetworkSection({ config, status: {}, send: push, sendQuietly: push, pending: false, ask: dialog => asked.push(dialog) })
+    const row = deep(tree, 'Row').find(found => found.props.title === 'Internet access')
+    const select = deep(row.props.access, 'Select')[0]
+    const items = deep(row.props.access, 'SelectItem')
+    const label = item => deepTexts(item).join('')
+    // Everything the row lets a user pick is picked, and a confirm that opens is confirmed.
+    for (const item of items) select.props.onValueChange(item.props.value)
+    for (const dialog of asked) dialog.run()
+    return {
+      shown: select ? label(items.find(item => item.props.value === select.props.value)) : deepTexts(row.props.access).join(''),
+      choices: items.map(label),
+      note: row.props.note || null,
+      asked: asked.map(dialog => ({ title: dialog.title, body: dialog.body, confirm: dialog.confirmLabel })),
+      sent: sent.map(([path, method, body]) => ({ path, method, body })),
+      addDestination: deep(tree, 'AddButton').length
+    }
+  }
+  out.internet = {
+    noRule: internetRow({ egress_allow_all: false }),
+    hasRule: internetRow({ egress_allow_all: true }),
+    doesNotSay: internetRow({}),
+    olderLauncher: internetRow(undefined),
+    noRuleSavedAllowed: internetRow({ egress_allow_all: false }, 'allow'),
+    hasRuleSavedAllowed: internetRow({ egress_allow_all: true }, 'allow')
+  }
+} catch (error) {
+  out.internet.error = String(error && error.stack ? error.stack : error)
+}
+
 
 // -- the page follows the launcher whatever the window does; an edit sends only what it changes ----------------
 out.follows = {}

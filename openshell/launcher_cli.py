@@ -157,8 +157,8 @@ def _cmd_serve(args) -> int:
 
     from .launcher.driver import DriverUnavailable
     from .launcher.layout import LayoutError, current_profile
-    from .launcher.spec import (ensure_token, free_loopback_port, load_spec, network_policy, parse_folder_arg,
-                                save_spec)
+    from .launcher.spec import (NO_ALL_INTERNET, ensure_token, free_loopback_port, load_spec, network_policy,
+                                parse_folder_arg, save_spec)
 
     try:
         layout = current_profile()
@@ -194,6 +194,8 @@ def _cmd_serve(args) -> int:
             spec["network"] = {**(spec.get("network") or {}), "egress": args.egress}
         network_policy(spec)
         driver = make_driver(spec)
+        if args.egress == "allow" and not driver.capabilities().get("egress_allow_all", True):
+            raise LayoutError(NO_ALL_INTERNET)  # as the settings routes refuse it: nothing is saved
         driver.preflight()
         save_spec(layout, spec)  # only once the driver passed preflight: a refused path is never saved
         token = ensure_token(layout, rotate=args.rotate_token)

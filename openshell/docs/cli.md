@@ -169,7 +169,7 @@ Point a client at `http://127.0.0.1:N` with the token stored in the file `serve`
 | `--busybox PATH` | busybox-w32 for the sandbox's shell |
 | `--openshell-gateway NAME` | A registered OpenShell gateway (mTLS) to run the sandbox on. Without it, `serve` uses the plugin's private gateway. |
 | `--openshell-image REF` | Hermes image for the OpenShell sandbox |
-| `--egress deny\|allow` | Internet access from the sandbox. `allow` is refused: OpenShell has no rule for all internet access. |
+| `--egress deny\|allow` | Internet access from the sandbox. `allow` is refused and nothing is saved: OpenShell has no rule for all internet access. |
 | `--rotate-token` | Mint a new outer token |
 | `--service` | Run as the profile's login service. It exits at once if the switch is off. |
 | `--revert`, `--keep` | Answer the review of the last sandbox session |

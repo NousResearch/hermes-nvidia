@@ -69,7 +69,8 @@ All commands and flags are in the [command reference](cli.md).
 | Websites | The addresses the profile's model uses | Destinations you add, and what you allow from a card |
 | Credentials | None. Keys reach the sandbox as placeholders. | See [API keys and providers](credentials.md) |
 
-Network access is blocked by default.
+Internet access is blocked: OpenShell has no rule for the whole internet.
+The sandbox reaches the websites in this table and no others.
 Hermes's own background lookups (update checks, model catalogs) stay blocked inside the sandbox.
 They never raise a card, and they show in Activity as refused.
 
@@ -98,8 +99,8 @@ The agent can also ask for a folder during a chat. See [Approval cards](cards.md
 A destination you add on the page is open for Hermes's interpreter.
 A site you allow from a card is open for any program in the sandbox.
 
-Leave **Internet access** set to **Blocked**.
-OpenShell has no rule for the whole internet, and a sandbox set to **Allowed** won't start.
+**Internet access** reads **Blocked**. OpenShell has no rule for the whole internet, so each
+site is added as a destination.
 
 The agent can also ask for a website during a chat. See [Approval cards](cards.md).
 

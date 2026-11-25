@@ -498,6 +498,19 @@ def test_live_network_updates_keep_grants_as_tunnels_except_on_provider_endpoint
     assert rules["allowed_host_api_openai_com"]["endpoints"] == [{"host": "api.openai.com", "port": 443}]
 
 
+def test_the_page_is_told_the_driver_has_no_rule_for_all_internet_access(tmp_path):
+    """Both answers the Sandbox page reads while the sandbox is on say it, so the page offers no such choice."""
+    from openshell.launcher.host_routes import HostRoutes
+    from openshell.launcher.proxy import parse_head
+
+    layout, runtime, cfg, bb = _tree(tmp_path)
+    routes = HostRoutes(_supervisor(layout, runtime, _driver(cfg, FakeCli(), tmp_path), bb), lambda: None)
+    request = parse_head(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+    for path in ("status", "config"):
+        status, payload, _ = asyncio.run(routes.match("GET", f"/api/plugins/openshell/{path}")(request, b""))
+        assert status == 200 and payload["capabilities"]["egress_allow_all"] is False, path
+
+
 def test_node_in_the_sandbox_uses_the_proxy(tmp_path):
     """Node's fetch ignores HTTPS_PROXY unless NODE_USE_ENV_PROXY is set; a direct connection fails (EACCES)."""
     from types import SimpleNamespace

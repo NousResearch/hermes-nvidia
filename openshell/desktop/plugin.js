@@ -257,6 +257,8 @@ const T = {
   keyWithheldTip: "The sandbox can reach this endpoint. It doesn't get the key until you allow it.",
   internetTitle: 'Allow internet access?',
   internetBody: 'The sandbox will be able to connect to any address on the internet.',
+  internetOnly: 'Only allowed destinations are reachable.',
+  internetNoRule: 'This sandbox has no rule for all internet access. Set it to Blocked.',
   allow: 'Allow',
   destinations: 'Allowed destinations',
   addDestination: 'Add destination…',
@@ -2060,6 +2062,12 @@ function NetworkSection({ config, status, send, sendQuietly, pending, ask }) {
   // An edit sends the internet setting and the destinations. What chat cards saved (network.approved) stays as it
   // is on the host and is never sent back.
   const put = next => ['/network', 'PUT', { egress: next.egress, allow: next.allow }]
+  // All of the internet is a choice only where the sandbox's driver has a rule for it (capabilities.egress_allow_all;
+  // a driver that does not say has one). Elsewhere the row says Blocked with nothing to choose.
+  const allInternet = config.capabilities?.egress_allow_all !== false
+  // A saved setting the driver cannot grant (a spec.yaml written by hand): the sandbox does not start with it, so
+  // the row says so and keeps the select as the way back to Blocked.
+  const ungranted = !allInternet && network.egress === 'allow'
 
   const setEgress = egress => {
     if (egress === network.egress) {
@@ -2132,13 +2140,17 @@ function NetworkSection({ config, status, send, sendQuietly, pending, ask }) {
     h(Row, {
       key: 'egress',
       title: T.internet,
+      note: allInternet ? null : ungranted ? T.internetNoRule : T.internetOnly,
       meta: applied && applied.egress !== network.egress ? h(PendingBadge) : null,
-      access: h(
-        Select,
-        { disabled: pending, onValueChange: setEgress, value: network.egress },
-        h(SelectTrigger, { 'aria-label': T.internet, className: 'w-full', size: 'sm' }, h(SelectValue, null)),
-        h(SelectContent, null, h(SelectItem, { value: 'deny' }, T.blocked), h(SelectItem, { value: 'allow' }, T.allowed))
-      )
+      access:
+        allInternet || ungranted
+          ? h(
+              Select,
+              { disabled: pending, onValueChange: setEgress, value: network.egress },
+              h(SelectTrigger, { 'aria-label': T.internet, className: 'w-full', size: 'sm' }, h(SelectValue, null)),
+              h(SelectContent, null, h(SelectItem, { value: 'deny' }, T.blocked), h(SelectItem, { value: 'allow' }, T.allowed))
+            )
+          : h('span', { style: S.staticAccess }, T.blocked)
     }),
     ...config.endpoints.filter(endpoint => !listed(endpoint)).map(endpoint =>
       h(Row, {

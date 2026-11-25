@@ -193,6 +193,22 @@ def test_a_foreground_serve_started_by_hand_is_its_own_switch_on(layout, serve):
     assert P.secrets(layout) == {"MODEL_API_KEY": KEY, "OTHER_API_KEY": OTHER}
 
 
+class NoAllInternetDriver(SR.FakeDriver):
+    """A driver without a rule for all internet access, as the OpenShell drivers are."""
+
+    capabilities_info = {**SR.FakeDriver.capabilities_info, "egress_allow_all": False}
+
+
+def test_serve_refuses_all_internet_access_where_the_driver_has_no_rule_for_it(layout, serve, monkeypatch, capsys):
+    monkeypatch.setattr(CLI, "make_driver", lambda spec: NoAllInternetDriver())
+    assert CLI._cmd_serve(_serve_args(egress="allow")) == 1
+    assert "This sandbox has no rule for all internet access; add the websites it needs." in capsys.readouterr().err
+    assert serve == [] and load_spec(layout)["network"]["egress"] == "deny"  # nothing started, nothing saved
+    monkeypatch.setattr(CLI, "make_driver", lambda spec: SR.FakeDriver())  # a driver that has the rule takes it
+    assert CLI._cmd_serve(_serve_args(egress="allow")) == 0
+    assert len(serve) == 1 and load_spec(layout)["network"]["egress"] == "allow"
+
+
 # -- keys and secret sources come from the pin ---------------------------------------------------------------
 
 def test_the_launchers_keys_are_the_pinned_ones_whatever_the_home_says_now(layout, monkeypatch):
