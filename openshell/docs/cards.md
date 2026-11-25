@@ -14,6 +14,16 @@ chat.
 | **Folder access** | A tool was refused a path | The nearest existing folder, with the access asked for: **Read only** or **Read and write** |
 | A tool's card, for example "Web extract" | A tool of that category is used for the first time | Every service the category's tools use for this profile. The card names each host. |
 
+A command that does not fail can still be refused a folder: `ls A; ls B` exits 0 when only `A` is
+refused. Such a command raises the **Folder access** card when both of these hold:
+
+- A line of its output says that access was denied, and names a path the command itself named or
+  a path below one.
+- The host has that path, outside the folders the sandbox has.
+
+The same holds for code the agent runs that catches the error and prints it.
+Any other path in the output of a command that did not fail is text and raises no card.
+
 ## Answer a card
 
 | Answer | What it does |
@@ -58,11 +68,14 @@ The agent waits for your answer.
 | A tool call was refused and its result shows the refusal | That tool call | Two minutes |
 | A program failed without printing a refusal (`curl -s`) | That tool call, once OpenShell's own record confirms that a site it named was refused | Two minutes |
 | A command did not fail although a program in it was refused (`curl -s` piped into `head`, or `curl` followed by `echo`) | That tool call, when OpenShell's record shows a site it named refused during the command | Two minutes |
+| A command did not fail although a folder it named was refused (several folders listed in one command, one of them refused) | That tool call, when the host has the refused path outside the sandbox's folders | Two minutes |
 | A refusal shows in no tool result (the record comes later, or the command names no site) | The reply. The card comes from OpenShell's record a moment later, and the launcher pauses the reply. | 90 seconds |
 
 Details:
 
 - A host name alone never raises a card. OpenShell's own record must show the site refused.
+- A path in the output of a command that did not fail never raises a card by itself. Its line must
+  say that access was denied, and the command itself must name the path.
 - If nobody answers in time, the agent says what it needs and stops.
   An answer given later continues the reply.
 

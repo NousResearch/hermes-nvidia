@@ -453,6 +453,7 @@ def file_rows(home: Path, spans: list[tuple[float, float]], since: Optional[floa
     if hi < lo:
         return [], []
     from .cards import refused_paths
+    from .refusals import failed_result
 
     try:
         con = _connect_ro(db)
@@ -493,7 +494,10 @@ def file_rows(home: Path, spans: list[tuple[float, float]], since: Optional[floa
         name = tool_name or name
         result = _result(content)
         base = {"t": ts, "kind": "files", "tool": name, "chat": sid, "message_id": mid}
-        refused = refused_paths(name, args, result)
+        # Refusals are listed for failed calls only. What a call that did not fail printed about a path it named
+        # is a candidate the launcher checks against the sandbox's folders before any card. This log cannot repeat
+        # that check for a past run, and the card's own rows show the decision.
+        refused = refused_paths(name, args, result) if failed_result(name, result) else []
         for path, access, missing in refused:
             if missing and not Path(path).exists():
                 continue  # really absent: not a refusal

@@ -26,6 +26,9 @@ OpenShell logs no per-file events, so file rows come from what the agent's own t
 A file the agent changed through the terminal (for example `echo > f`) shows only if a refusal
 was reported.
 
+A folder refused inside a command that did not fail has no file row. The answer to its
+**Folder access** card shows under Decisions.
+
 ## How the audit is kept on the host
 
 The audit log is kept on the host, so it stays readable after the sandbox stops.

@@ -122,6 +122,15 @@ card. Each result carries the reason you gave.
 A connection that is refused while no tool call is open raises no card.
 The next tool call that names that host is asked about the site first.
 
+### A folder refused in a command that did not fail needs its full path
+
+When a command does not fail although a folder was refused (`ls A; ls B`), the **Folder access**
+card comes only if the command names the folder by its full path.
+
+A relative path, `~`, a variable or a path that only a script names raises no card. Neither does
+a line that says only "No such file or directory". The agent reads the refusal in the command's
+output.
+
 ### Windows: a program that connects without the proxy
 
 A program that connects directly, without the sandbox's proxy, is refused and leaves no record.

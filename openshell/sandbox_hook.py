@@ -29,9 +29,16 @@ one it relays those hosts, marked ``zero_wait``; the launcher looks at the recor
 card like any refused one. Where the launcher copies nothing (a driver without such a feed), only a call whose
 output shows a network refusal's words relays the hosts its command named, as candidates the launcher checks
 against the records. A call that
-named no host is never held, and a successful result of any other tool that shows a refusal's words and names no
+named no host is never held for a website, and a successful result of any other tool that shows a refusal's words and names no
 host is not relayed (a skill's or a note's text; a Hermes tool with services of its own still is: the launcher
 knows them).
+
+A terminal / execute_code call that did not fail can also have been refused a folder (``ls A; ls B`` exits 0 when
+only A was refused; code that catches its error ends normally). OpenShell records no per-file events, so here the
+output is read, narrowly: a line that says access was denied counts when it names a path the call's own command or
+code named (``refusals.named_refusals``). The request is marked ``succeeded``: the launcher raises the card only
+for a path the host has outside the sandbox's grants, and the call is held on the card like a failed one. Text such
+a call prints about any other path is data.
 
 The wait stays under core's hook timeout (``plugins.hook_callback_timeout``; a callback that times out
 is abandoned and suppressed for a minute): ``min(HERMES_SANDBOX_CARD_WAIT, timeout - 10 s)``. The
@@ -110,8 +117,9 @@ def budget() -> float:
 
 def resolve(tool_name: str, args, result, *, session_id: str = "", duration_ms=None, tool_call_id: str = "",
             status=None, sleep=time.sleep, clock=time.monotonic) -> Optional[str]:
-    """*status*: core's verdict on the call (``ok`` / ``error``) where core passes one; a successful call's
-    output is never read for refused paths (``refusals.failed_result``)."""
+    """*status*: core's verdict on the call (``ok`` / ``error``) where core passes one. A successful call's
+    output is read for refused paths only where a terminal or execute_code call named the path itself
+    (``refusals.named_refusals``)."""
     if result is None:
         return None
     ended = time.time()
@@ -125,8 +133,11 @@ def resolve(tool_name: str, args, result, *, session_id: str = "", duration_ms=N
     started = ended - (float(duration_ms) / 1000.0 if isinstance(duration_ms, (int, float)) else 0.0)
     base = {"session_id": session_id or None, "tool": tool_name or None, "t": started}
     if paths:
+        # A call that did not fail is marked: its paths come from what it printed about paths it named, and the
+        # launcher asks only for one the host has.
         requests.append({**base, "kind": "access",
-                         "paths": [{"path": str(p), "access": a, "missing": m} for p, a, m in paths]})
+                         "paths": [{"path": str(p), "access": a, "missing": m} for p, a, m in paths],
+                         **({} if failed_result(tool_name, result, status) else {"succeeded": True})})
     hosts, strength = refused_destinations(tool_name, args, result, status=status) if refused else ([], None)
     unsaid = False
     if strength and (hosts or (strength == "strong" and _asks_unnamed(tool_name, result, status))):

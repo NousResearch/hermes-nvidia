@@ -211,6 +211,9 @@ def parse_request(rid: str, raw: bytes) -> Optional[dict]:
         except (TypeError, ValueError):
             out["until"] = 0.0
     if data["kind"] == "access":
+        if data.get("succeeded") is True:
+            # A call that did not fail: the launcher asks only for a path the host has (``Cards.raise_access``).
+            out["succeeded"] = True
         paths = []
         for item in (data.get("paths") or [])[:4]:
             if not isinstance(item, dict) or not isinstance(item.get("path"), str) or len(item["path"]) > 1024:

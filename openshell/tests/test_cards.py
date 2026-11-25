@@ -2290,6 +2290,113 @@ def test_a_call_core_or_the_desktop_reports_failed_is_read_for_refusals(harness,
     asyncio.run(main())
 
 
+def _listed(refused: Path, listed: Path, line: str = "", command: str = "") -> tuple[dict, dict]:
+    """A terminal call that names two paths in one command: *refused* is refused and *listed* lists, so the command
+    exits 0. The refusal line is the shell's, with the path unquoted."""
+    args = {"command": command or f'ls "{refused.as_posix()}"; ls "{listed.as_posix()}"'}
+    said = line or f"ls: {refused.as_posix()}: Permission denied"
+    return args, {"output": f"{said}\na.txt\n", "exit_code": 0, "error": None}
+
+
+def _hook_ok(args: dict, result: dict):
+    """The hook on a worker thread, for a call core reports as successful."""
+    return asyncio.ensure_future(asyncio.to_thread(
+        H.on_tool_result, tool_name="terminal", args=args, result=json.dumps(result), session_id="chatA",
+        tool_call_id="call_1", duration_ms=300, status="ok"))
+
+
+async def _until_returned(cards, hook, rounds=200):
+    """The launcher reads the hook's requests, as it does every REQUEST_POLL, until the hook has returned."""
+    for _ in range(rounds):
+        for request in V.read_requests(cards._requests_dir):
+            await cards.on_request(request)
+        if hook.done():
+            break
+        await asyncio.sleep(0.02)
+    return await asyncio.wait_for(hook, 10)
+
+
+def test_a_command_that_succeeded_is_held_on_the_card_for_the_folder_it_was_refused(harness, channel):
+    """Two folders listed in one command: the one outside the grants is refused and the other lists, so the command
+    exits 0. The call is held on the folder's card like a failed one, and its result carries the answer's outcome."""
+    sup, outside = harness["sup"], harness["outside"]
+
+    async def main():
+        cards, conn = await _setup(harness)
+        await _turn_start(cards, conn)
+        hook = _hook_ok(*_listed(outside, harness["work"]))
+        await _pump_requests(cards, lambda: _cards(conn))
+        [card] = _cards(conn)
+        p = card["params"]
+        assert p["kind"] == "access" and Path(p["path"]) == outside.resolve() and p["access"] == "read"
+        await asyncio.sleep(0.1)
+        assert not hook.done()  # The call waits for the answer
+        await cards._from_client(conn, _answer(card, "once"))
+        out = json.loads(await asyncio.wait_for(hook, 10))
+        assert out["exit_code"] == 0 and "a.txt" in out["output"]  # The result as the tool returned it, plus the note
+        assert "The sandbox restarts now to add it" in out["sandbox"] and H.STOP_NOW in out["sandbox"]
+        await _turn_end(cards, conn)
+        assert [r["folders"] for r in sup.restarts] == [[{"path": str(outside.resolve()), "access": "ro"}]]
+        await cards.stop()
+
+    asyncio.run(main())
+
+
+def test_a_command_that_succeeded_is_asked_only_for_what_the_host_has_outside_the_grants(harness, channel):
+    """The launcher checks such a request on the host before any card. A path inside the folders the sandbox has is
+    not asked for, and neither is a path the host does not have: in both cases the line is only text the command
+    printed, and the call returns as it came. A refused write of a new file asks for the folder the file goes into."""
+    work, outside = harness["work"], harness["outside"]
+    (work / "notes").mkdir()
+
+    async def main():
+        cards, conn = await _setup(harness)
+        await _turn_start(cards, conn)
+        for refused in (work / "notes", outside / "gone" / "deeper"):
+            out = await _until_returned(cards, _hook_ok(*_listed(refused, work)))
+            assert out is None and _cards(conn) == [], refused
+        assert [r["status"] for r in cards.verdicts.requests.values()] == ["refused", "refused"]  # Asked both times
+        new = outside / "new.txt"
+        hook = _hook_ok(*_listed(new, work, line=f"sh: can't create {new.as_posix()}: Permission denied",
+                                 command=f'echo hi > "{new.as_posix()}"; ls "{work.as_posix()}"'))
+        await _pump_requests(cards, lambda: _cards(conn))
+        [card] = _cards(conn)
+        assert Path(card["params"]["path"]) == outside.resolve() and card["params"]["access"] == "read_write"
+        cards._stop_waiting("chatA")  # The user stops the turn: the held call returns
+        await asyncio.wait_for(hook, 10)
+        await cards.stop()
+
+    asyncio.run(main())
+
+
+def test_a_successful_commands_tool_complete_is_checked_on_the_host_the_same_way(harness):
+    """The launcher's own reading of the relayed tool.complete follows the same rule: no card for a path the sandbox
+    has or the host lacks, one card for the refused folder the host has outside the grants."""
+    work, outside = harness["work"], harness["outside"]
+    (work / "notes").mkdir()
+
+    def frame(refused: Path) -> dict:
+        args, result = _listed(refused, work)
+        return {"jsonrpc": "2.0", "method": "event", "params": {"type": "tool.complete", "session_id": "live1",
+                                                                "payload": {"name": "terminal", "args": args,
+                                                                            "result": result}}}
+
+    async def main():
+        cards, conn = await _setup(harness)
+        await _turn_start(cards, conn)
+        for refused in (work / "notes", outside / "gone" / "deeper"):
+            await cards._from_sandbox(conn, frame(refused))
+            await _settle()
+            assert _cards(conn) == [], refused
+        await cards._from_sandbox(conn, frame(outside))
+        await _settle()
+        [card] = _cards(conn)
+        assert Path(card["params"]["path"]) == outside.resolve() and card["params"]["access"] == "read"
+        await cards.stop()
+
+    asyncio.run(main())
+
+
 def test_openshells_own_host_folders_never_get_a_card(harness, tmp_path, monkeypatch):
     """The OpenShell host supervisor's log folder (``C:\\var\\log`` on Windows) exists on the host outside every
     grant. A refusal naming it, real or misread, gets no card: it holds the sandbox runtime's own logs, not the user's

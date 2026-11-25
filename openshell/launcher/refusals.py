@@ -17,7 +17,8 @@ WRITE_TOOLS = frozenset({"write_file", "patch", "edit_file", "apply_patch", "str
 # File tools: a successful call's output is a file's data (or a listing of files), never a refusal of any kind.
 FILE_TOOLS = WRITE_TOOLS | frozenset({"read_file", "search_files"})
 # ... nor is what a program printed when it succeeded (terminal, execute_code): a refused program fails, and
-# OpenShell's draft for its refused connection raises the card in any case.
+# OpenShell's draft for its refused connection raises the card in any case. One thing is read from such a printout:
+# a line that says access was denied to a path the call's own command or code named (``named_refusals``).
 PROGRAM_TOOLS = frozenset({"terminal", "execute_code"})
 DATA_TOOLS = FILE_TOOLS | PROGRAM_TOOLS
 _FAILED_STATUSES = frozenset({"error", "failed", "failure"})
@@ -33,6 +34,9 @@ _WRITE_CMD_RE = re.compile(r"(?:^|[\s;&|])(?:>>?|tee|touch|mkdir|cp|mv|rm|rmdir|
 _QUOTED_PATH_RE = re.compile(r"""['"`]((?:[A-Za-z]:[\\/]|/)[^'"`\n]{0,400})['"`]""")
 _PLAIN_PATH_RE = re.compile(r"(?:^|(?<=[\s=(]))((?:[A-Za-z]:[\\/]|/)[^\s'\"`:;,)]{0,400})")
 _MSYS_RE = re.compile(r"^/([A-Za-z])(/.*)?$")
+# How many denial lines of a call that did not fail are read for the paths its command named (a recursive listing
+# can print thousands).
+NAMED_REFUSAL_LINES = 64
 # The arguments a file tool names its path in.
 _PATH_ARGS = ("path", "file_path", "filename", "target", "directory")
 
@@ -159,7 +163,8 @@ def failed_result(name: str, result, status: Optional[str] = None) -> bool:
     otherwise the result's top-level shape decides, as core's does: a JSON object failed when it says so
     (``success: false``, an ``error``, a ``status`` of error/failed, a non-zero ``exit_code``), and text that is not
     JSON may be an error message. An error nested in a successful-shaped result (a web tool's per-URL
-    ``results[].error``) does not make the call failed; ``refused_destinations`` still reads those."""
+    ``results[].error``) does not make the call failed; ``refused_destinations`` still reads those. A terminal or
+    execute_code call that did not fail can still name a refused path, by a narrower rule (``named_refusals``)."""
     if str(status or "").strip().lower() == "error":
         return True
     data = result
@@ -225,10 +230,11 @@ def host_path(raw: str) -> Optional[Path]:
 
 def refused_paths(name: str, args: dict, result, *, status: Optional[str] = None) -> list[tuple[Path, str, bool]]:
     """Paths a tool result says were refused: ``(path, access, missing)``. *access* is ``read`` or
-    ``read_write``; *missing* is True when the tool said "no such file" rather than "denied". Only a failed
-    call names any (``failed_result``; *status* is core's verdict when the caller has it)."""
+    ``read_write``; *missing* is True when the tool said "no such file" rather than "denied". A failed call
+    names them (``failed_result``; *status* is core's verdict when the caller has it). A call that did not fail
+    names only the denied paths its own command or code named (``named_refusals``: terminal and execute_code)."""
     if not failed_result(name, result, status):
-        return []
+        return named_refusals(name, args, result)
     # A refusal line names only the paths on it, line by line as the tool printed them (``result_lines``): read as
     # one encoded line, a JSON result put every path a call printed beside its refusal. A connect() the sandbox
     # refused ("[Errno 13] Permission denied" with no path after it) is a network refusal and names no path, even
@@ -271,6 +277,75 @@ def refused_paths(name: str, args: dict, result, *, status: Optional[str] = None
             if p is not None and any(Path(raw).name and Path(raw).name in ln for ln in lines):
                 add(raw, lines[0])
     # an unquoted match cut at a space inside a longer path found too ("D:\Jane" of "D:\Jane Doe\x")
+    return [v for k, v in found.items() if not any(o != k and o.startswith(k + " ") for o in found)]
+
+
+def _path_key(path: Path) -> str:
+    """*path* as two spellings of one host path compare equal: the kind of slash, a trailing separator and, on
+    Windows, the case make no difference."""
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
+def _asked_paths(args) -> dict[str, Path]:
+    """The absolute paths a call's own arguments name (its command or code), by ``_path_key``. A drive or
+    filesystem root is left out: it is above every path, so naming it names none of them."""
+    text = _arg_text(args)
+    out: dict[str, Path] = {}
+    for raw in _QUOTED_PATH_RE.findall(text) + _PLAIN_PATH_RE.findall(text):
+        path = host_path(raw)
+        if path is not None and path.parent != path:
+            out.setdefault(_path_key(path), path)
+    return out
+
+
+def _spelled(path: Path) -> re.Pattern:
+    """Matches *path* in a line of output whose separators are folded to ``/``, with what the line names below it
+    (group 1). On Windows in either spelling of the drive (``C:/x``, the shell's ``/c/x``) and in any case. A longer
+    name that only starts the same (``Desktop-old`` for ``Desktop``) does not match. This finds a path printed
+    without quotes that holds a space, which no pattern for an unquoted path can delimit."""
+    posix = path.as_posix().rstrip("/")
+    spellings = [posix]
+    drive = re.match(r"^([A-Za-z]):/(.*)$", posix) if os.name == "nt" else None
+    if drive:
+        spellings.append(f"/{drive.group(1)}/{drive.group(2)}")
+    body = "|".join(re.escape(spelling) for spelling in spellings)
+    return re.compile(rf"(?<![\w./~-])(?:{body})((?:/[^\s'\"`\u2018\u2019:;,)]*)?)(?![\w-]|\.\w)",
+                      re.I if os.name == "nt" else 0)
+
+
+def named_refusals(name: str, args: dict, result) -> list[tuple[Path, str, bool]]:
+    """Refused paths of a terminal / execute_code call that did not fail: ``(path, access, False)``. ``ls A; ls B``
+    exits 0 when only A was refused, and code that catches its error ends normally. Such a call's output is data, so
+    a path counts only when both hold: a line of the output says access was denied and names the path, and the
+    call's own command or code named that path or a folder above it. "No such file" is not enough here, and a path
+    that only the output names never counts (a printed document or log that quotes a refusal). The path returned is
+    the one the refusal line names, which is the least that was refused; *access* follows the rule for failed calls.
+    Only candidates: the launcher asks for one once the host has it outside the sandbox's grants (cards.py)."""
+    if name not in PROGRAM_TOOLS:
+        return []
+    # "[Errno 13] Permission denied" with no path after it is a refused connect(), as for a failed call.
+    lines = [ln for ln in result_lines(result) if DENIED_RE.search(NET_EACCES_RE.sub("", ln))]
+    asked = _asked_paths(args) if lines else {}
+    if not asked:
+        return []
+    command = str(args.get("command") or "") if isinstance(args, dict) else ""
+    write = bool(_WRITE_CMD_RE.search(command))
+    below = tuple(key.rstrip("\\/") + os.sep for key in asked)
+    spelled = [(path, _spelled(path)) for path in asked.values()]
+    found: dict[str, tuple[Path, str, bool]] = {}
+    for line in lines[:NAMED_REFUSAL_LINES]:
+        shown = [host_path(raw) for raw in _QUOTED_PATH_RE.findall(line) + _PLAIN_PATH_RE.findall(line)]
+        folded = re.sub(r"[\\/]+", "/", line)
+        shown += [host_path(path.as_posix().rstrip("/") + m.group(1))
+                  for path, regex in spelled for m in regex.finditer(folded)]
+        for path in shown:
+            key = _path_key(path) if path is not None else ""
+            if key not in asked and not key.startswith(below):
+                continue
+            access = "read_write" if write or _WRITE_HINT_RE.search(line) else "read"
+            if key not in found or (access == "read_write" and found[key][1] == "read"):
+                found[key] = (path, access, False)
+    # A match cut at a space is dropped when the longer path it was cut from was found too.
     return [v for k, v in found.items() if not any(o != k and o.startswith(k + " ") for o in found)]
 
 

@@ -289,6 +289,25 @@ def test_filters_kinds_denied_only_and_window(work_profile, tmp_path):
     assert len(limited["rows"]) == 3 and limited["truncated"]
 
 
+def test_a_command_that_did_not_fail_lists_no_refused_file(work_profile, tmp_path):
+    """File rows come from failed calls. A command that did not fail can print a refusal line for a folder it named;
+    the launcher checks such a folder against the sandbox's folders before any card, and this log cannot repeat that
+    check for a past run, so the call lists no refused file. The same output from a failed call does."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    command = f'ls "{outside.as_posix()}"; echo done'
+    output = f"ls: {outside.as_posix()}: Permission denied\ndone\n"
+    make_db(work_profile.home, [
+        ("chat-a", "user", T0 + 10, "list it", None, None, None),
+        ("chat-a", "assistant", T0 + 11, "", None, None,
+         json.dumps([call("c1", "terminal", {"command": command}), call("c2", "terminal", {"command": command})])),
+        ("chat-a", "tool", T0 + 12, json.dumps({"output": output, "exit_code": 0}), "c1", "terminal", None),
+        ("chat-a", "tool", T0 + 13, json.dumps({"output": output, "exit_code": 2}), "c2", "terminal", None),
+    ])
+    rows, _ = A.file_rows(work_profile.home, [(T0, T0 + 100)], None, None)
+    assert [(row["t"], row["outcome"], Path(row["path"])) for row in rows] == [(T0 + 13, "denied", outside)]
+
+
 def test_export_is_ocsf_jsonl_with_hermes_rows_mapped(work_profile, tmp_path):
     seed(work_profile, folder=tmp_path / "f")
     out = A.export(work_profile, since=T0 - 10, until=T0 + 1000)

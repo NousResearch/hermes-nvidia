@@ -1,7 +1,9 @@
 """Which refusals a tool result can report (launcher/refusals.py), shared by the in-sandbox hook and the launcher.
 
-A sandbox refusal is only ever the outcome of a failed call: a successful call's output is data (the file the agent
-read, a listing, a page) and words in it are not a refusal. The replay below is a successful read_file of a plan
+A sandbox refusal is the outcome of a failed call: a successful call's output is data (the file the agent read, a
+listing, a page) and words in it are not a refusal. One exception, for terminal and execute_code: a call that did not
+fail names a refused path when a line of its output says access was denied and names a path the call's own command or
+code named (several folders listed in one command, one of them refused). The replay below is a successful read_file of a plan
 document that mentions a denial on one line and quotes a host folder on another: one JSON line once core encodes
 it, so every path in the document used to count as refused (a folder card for the host folder, held the read).
 """
@@ -125,3 +127,140 @@ def test_a_failed_call_is_told_by_its_shape_or_by_core():
     assert failed("plugin_tool", json.dumps("Permission denied")) and not failed("plugin_tool", "[1, 2]")
     assert failed("read_file", read_result(plan_lines()), status="error")  # core's own verdict, when it gives one
     assert not failed("read_file", read_result(plan_lines()), status="ok")
+
+
+# -- a program call that did not fail, refused a path its own command or code named --------------------------------
+
+HOME = "C:/Users/you" if NT else "/home/you"
+DESKTOP, NOTES = f"{HOME}/Desktop", f"{HOME}/Documents/notes"
+PROFILE = f"{HOME}/AppData/Local/hermes/profiles/work" if NT else f"{HOME}/.hermes/profiles/work"
+OS_DENIAL = "[WinError 5] Access is denied" if NT else "[Errno 13] Permission denied"
+
+
+def listing(refused: str = DESKTOP, said: str = "Permission denied") -> tuple[dict, dict]:
+    """A terminal call that lists three folders in one command. The second is refused and the third lists, so the
+    command exits 0."""
+    args = {"command": f'ls "{NOTES}"; ls "{refused}"; ls "{PROFILE}"'}
+    return args, {"output": f"a.txt\nls: {refused}: {said}\nconfig.yaml\n", "exit_code": 0, "error": None}
+
+
+def relayed(monkeypatch, name: str, args: dict, result) -> list[dict]:
+    """What the in-sandbox hook asks the launcher after one call core reports as successful (nothing answers here,
+    so the result returns as it came)."""
+    from openshell import sandbox_hook as H
+
+    sent = []
+    monkeypatch.setattr(H, "_send", lambda request: sent.append(request) or None)
+    assert H.resolve(name, args, json.dumps(result), session_id="chatA", status="ok") is None
+    return sent
+
+
+def asked_for(request: dict) -> list[tuple[str, str]]:
+    return [(item["path"], item["access"]) for item in request["paths"]]
+
+
+def test_a_command_that_succeeded_names_the_folder_it_was_refused(monkeypatch):
+    """Several folders listed in one command: one is refused and a later listing succeeds, so the command exits 0.
+    The refusal line names a folder the command itself named, so that folder is asked for, to read."""
+    args, result = listing()
+    assert not R.failed_result("terminal", result, "ok")
+    for shape in (result, json.dumps(result)):  # Parsed (the launcher's copy) and as core encodes it (the hook's)
+        assert R.refused_paths("terminal", args, shape, status="ok") == [(Path(DESKTOP), "read", False)]
+    [request] = relayed(monkeypatch, "terminal", args, result)
+    assert request["kind"] == "access" and request["tool"] == "terminal"
+    assert asked_for(request) == [(str(Path(DESKTOP)), "read")]
+
+
+def test_the_command_and_the_refusal_line_may_spell_the_folder_differently():
+    """The two are compared as the host names paths: quotes and a trailing separator do not count, nor on Windows
+    do the kind of slash, the case, or the shell's /c/ spelling of a drive."""
+    spaced = f"{HOME}/My Files"
+    pairs = [(f'ls "{DESKTOP}/"', f"ls: {DESKTOP}: Permission denied", DESKTOP),
+             (f"ls '{DESKTOP}'", f"ls: cannot open directory '{DESKTOP}/': Permission denied", DESKTOP),
+             (f"ls {DESKTOP}", f'ls: cannot access "{DESKTOP}": Operation not permitted', DESKTOP),
+             (f'ls "{spaced}"', f"ls: {spaced}: Permission denied", spaced),  # Printed unquoted, with its space
+             (f'find "{DESKTOP}" -name "*.md" | head', f"find: \u2018{DESKTOP}\u2019: Permission denied", DESKTOP)]
+    if NT:
+        pairs += [("ls /c/Users/you/Desktop", "ls: C:/Users/you/Desktop: Permission denied", DESKTOP),
+                  ('ls "C:\\Users\\you\\Desktop"', "ls: c:/users/you/desktop: Permission denied", DESKTOP),
+                  ("dir C:\\Users\\you\\Desktop", "Access is denied: 'C:\\\\Users\\\\you\\\\Desktop'", DESKTOP),
+                  ('ls "C:/Users/you/Desktop"', "ls: /c/Users/you/Desktop: Permission denied", DESKTOP)]
+    for command, line, folder in pairs:
+        result = {"output": f"{line}\ndone\n", "exit_code": 0}
+        found = R.refused_paths("terminal", {"command": f"{command}; echo done"}, result)
+        assert [(os.path.normcase(str(p)), a) for p, a, _ in found] \
+            == [(os.path.normcase(str(Path(folder))), "read")], command
+
+
+def test_a_refused_write_in_a_command_that_succeeded_asks_to_read_and_write(monkeypatch):
+    """A write into the refused folder, then a listing that succeeds: the command exits 0 and the folder is asked for
+    with read and write, as for a failed write."""
+    new = f"{DESKTOP}/new.txt"
+    args = {"command": f'echo hi > "{new}"; ls "{PROFILE}"'}
+    result = {"output": f"sh: can't create {new}: Permission denied\nconfig.yaml\n", "exit_code": 0, "error": None}
+    assert R.refused_paths("terminal", args, result, status="ok") == [(Path(new), "read_write", False)]
+    [request] = relayed(monkeypatch, "terminal", args, result)
+    assert request["kind"] == "access" and asked_for(request) == [(str(Path(new)), "read_write")]
+
+
+def test_code_that_caught_its_refusal_names_the_folder_it_was_refused(monkeypatch):
+    """execute_code catches the error, prints it and ends normally: the printed refusal names a folder the code
+    itself named."""
+    code = (f"import os\ntry:\n    print(os.listdir({DESKTOP!r}))\nexcept OSError as exc:\n"
+            "    print('skipped:', exc)\nprint('done')\n")
+    result = {"status": "success", "output": f"skipped: {OS_DENIAL}: {DESKTOP!r}\ndone\n", "tool_calls_made": 0,
+              "duration_seconds": 0.21}
+    assert not R.failed_result("execute_code", result, "ok")
+    assert R.refused_paths("execute_code", {"code": code}, result, status="ok") == [(Path(DESKTOP), "read", False)]
+    [request] = relayed(monkeypatch, "execute_code", {"code": code}, result)
+    assert request["kind"] == "access" and asked_for(request) == [(str(Path(DESKTOP)), "read")]
+
+
+def test_a_refusal_below_the_named_folder_asks_for_the_path_it_names():
+    """A recursive listing of a folder is refused one folder inside it: the path asked for is the one the refusal
+    line names, the least that was refused, not the folder above it that the command named."""
+    inner = f"{NOTES}/private"
+    result = {"output": f"{NOTES}:\na.txt\nprivate\nls: {inner}: Permission denied\n", "exit_code": 0}
+    assert R.refused_paths("terminal", {"command": f'ls -R "{NOTES}" | head -50'}, result) \
+        == [(Path(inner), "read", False)]
+    # A drive or filesystem root is above every path, so naming it names none of them
+    root = "C:/" if NT else "/"
+    assert R.refused_paths("terminal", {"command": f"ls -R {root} | head -50"}, result) == []
+
+
+def test_a_successful_calls_output_stays_data_for_paths_its_command_did_not_name(monkeypatch):
+    """What a call that succeeded printed is data wherever it names a path the call's own command or code did not,
+    and a successful file tool's result is data whatever it names."""
+    cases = [
+        # The plan document printed by cat: a denial phrase on one line, a host folder quoted on another
+        ("terminal", {"command": f'cat "{DOC}"'}, {"output": "\n".join(plan_lines()), "exit_code": 0}),
+        # A log line that says denied and names a folder the command did not name
+        ("terminal", {"command": f'cat "{DOC}"; ls "{NOTES}"'},
+         {"output": f"12:00:01 worker: open('{HOST_FOLDER}/app.log'): Permission denied\na.txt\n", "exit_code": 0}),
+        # "no such file" alone does not make a call that succeeded a refused one
+        ("terminal", *listing(said="No such file or directory")),
+        # A folder beside the named one whose name starts the same
+        ("terminal", {"command": f'ls "{DESKTOP}"; echo done'},
+         {"output": f"ls: {DESKTOP}-old: Permission denied\nls: {DESKTOP}2/a: Permission denied\ndone\n",
+          "exit_code": 0}),
+        # A refused connect() says "[Errno 13] Permission denied" with no path after it: a network refusal
+        ("execute_code", {"code": f"print(open({DOC!r}).read())"},
+         {"status": "success", "output": f"fetching for {DOC}: [Errno 13] Permission denied\n"}),
+        # File tools: the file's own text, even where it names the path the tool was given
+        ("read_file", {"path": DOC}, json.loads(read_result([f"cat: can't open '{DOC}': Permission denied"]))),
+        ("search_files", {"path": HOST_FOLDER, "pattern": "denied"},
+         {"total_count": 1, "matches": [{"path": f"{HOST_FOLDER}/a.log", "line": 3,
+                                         "content": f"open('{HOST_FOLDER}/b'): Permission denied"}]}),
+    ]
+    for name, args, result in cases:
+        assert R.refused_paths(name, args, result, status="ok") == [], (name, args)
+        assert relayed(monkeypatch, name, args, result) == [], (name, args)
+
+
+def test_a_command_that_succeeded_is_asked_for_two_folders_at_most(monkeypatch):
+    folders = [f"{HOME}/{name}" for name in ("Desktop", "Downloads", "Pictures")]
+    args = {"command": "; ".join(f'ls "{folder}"' for folder in folders) + f'; ls "{PROFILE}"'}
+    result = {"output": "".join(f"ls: {folder}: Permission denied\n" for folder in folders) + "config.yaml\n",
+              "exit_code": 0}
+    [request] = relayed(monkeypatch, "terminal", args, result)
+    assert asked_for(request) == [(str(Path(folder)), "read") for folder in folders[:2]]

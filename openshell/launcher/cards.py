@@ -13,7 +13,8 @@ Sources (all on the host; the sandbox can trigger a card only through what its e
   moment, as long as the driver says its feed can trail a refusal), and the launcher then looks at the records
   once (``ZERO_WAIT_SKEW``).
   Under a driver with no such feed, only such a call whose output shows a network refusal's words relays the
-  hosts its command named, as candidates. Every other successful call returns as it came.
+  hosts its command named, as candidates. Every other successful call returns as it came, except one that was
+  refused a path its own command or code named (Folders, below).
 * Network: OpenShell drafts a proposal for every connection it blocks. While a turn runs the launcher
   lists the driver's proposals and folds them into host cards (Hermes's own fetches outside tool calls
   stay on the Sandbox page without a card). A card raised this way for a program the agent ran has no tool
@@ -21,7 +22,10 @@ Sources (all on the host; the sandbox can trigger a card only through what its e
 * Folders: a relayed ``tool.complete`` that reports a refused path (permission denied; "no such file" /
   "file not found" for a path that exists on the host) raises a ``kind: "access"`` card for the nearest
   existing host folder, checked by the same rules as Add folder and against the running sandbox's
-  grants (never a credential path, never something already granted).
+  grants (never a credential path, never something already granted). A terminal or execute_code call that did
+  not fail reports only a denied path its own command or code named (``refusals.named_refusals``; the hook marks
+  its request ``succeeded``), and gets a card only when the host has that path: nothing but the call's own text
+  says it was refused, so no folder above a path the host lacks is asked for.
 
 One card per host: http and https (80 and 443, plus any other port seen for it), any program in the
 sandbox. Hermes's own tool backends are labelled by the tool that uses them ("Web search
@@ -101,8 +105,8 @@ from typing import Optional
 
 from . import categories
 from .refusals import (DENIED_RE as _DENIED_RE, MISSING_RE as _MISSING_RE, WRITE_TOOLS as _WRITE_TOOLS,  # noqa: F401
-                       CANDIDATE, KEYLESS_WEB_HOSTS, ZERO_WAIT_SKEW, card_host, denied_in_events, host_path,
-                       refused_between, refused_paths)
+                       CANDIDATE, KEYLESS_WEB_HOSTS, ZERO_WAIT_SKEW, card_host, denied_in_events, failed_result,
+                       host_path, refused_between, refused_paths)
 from .verdicts import FINAL, Verdicts, dir_key, net_key, read_requests
 
 log = logging.getLogger("openshell.cards")
@@ -472,6 +476,12 @@ def _inside(child: Path, parent: Path) -> bool:
     except (OSError, ValueError):
         return False
     return a == b or a.startswith(b.rstrip("\\/") + os.sep)
+
+
+def _on_host(path: Path, access: str) -> bool:
+    """Whether the host has what a refusal names: the path itself or, for a refused write, the folder a new file
+    or folder goes into."""
+    return path.exists() or (access == "read_write" and path.parent.is_dir())
 
 
 def _leaf(binary: str) -> str:
@@ -1297,9 +1307,12 @@ class Cards:
         return None
 
     async def raise_access(self, path: str, access: str, *, key: Optional[str] = None, origin: str = "refusal",
-                           missing: bool = False) -> tuple[int, dict]:
+                           missing: bool = False, must_exist: bool = False) -> tuple[int, dict]:
         """A folder card for *path* (a refused file or folder). Checked on the host: the nearest existing
-        folder, by Add folder's rules, not a credential path, not already granted."""
+        folder, by Add folder's rules, not a credential path, not already granted. *missing*: the tool said "no
+        such file", so there is a card only when the host has the path. *must_exist*: the call did not fail and
+        only its own text says the path was refused, so there is a card only when the host has the path (for a
+        refused write, the folder it goes into); a path the host lacks never asks for a folder above it."""
         from .layout import LayoutError
         from .spec import folder_from_entry
 
@@ -1311,6 +1324,9 @@ class Cards:
         access = "read_write" if access in ("read_write", "rw") else "read"
         p = Path(path)
         if missing and not p.exists():
+            return 204, {"detail": "not on the host"}
+        if must_exist and not _on_host(p, access):
+            self._record({"event": "not carded", "origin": origin, "path": str(path), "detail": "not on the host"})
             return 204, {"detail": "not on the host"}
         covered = self._covered(p, access)
         if covered:
@@ -1420,14 +1436,16 @@ class Cards:
                       "tool": request.get("tool"), "hosts": request.get("hosts"),
                       "paths": [p["path"] for p in request.get("paths") or []],
                       **({"strength": CANDIDATE} if request.get("strength") == CANDIDATE else {}),
-                      **({"zero_wait": True} if request.get("zero_wait") else {})})
+                      **({"zero_wait": True} if request.get("zero_wait") else {}),
+                      **({"succeeded": True} if request.get("succeeded") else {})})
         if request["kind"] == "access":
             raised = 0
             for item in request["paths"]:
                 if raised >= MAX_ACCESS_CARDS_PER_RESULT:
                     break
                 status, payload = await self.raise_access(item["path"], item["access"], key=key, origin="hook",
-                                                          missing=item["missing"])
+                                                          missing=item["missing"],
+                                                          must_exist=bool(request.get("succeeded")))
                 if status == 200 and payload.get("path"):
                     keys.append(dir_key(payload["path"]))
                     raised += 1
@@ -2674,12 +2692,16 @@ class Cards:
         result = payload.get("result")
         if result is None:
             result = payload.get("result_text") or payload.get("summary") or ""
-        # Only a failed call names refused paths (``refusals.failed_result``): a successful read's text is the file's
-        # data. A frame that says whether the call failed (``is_error``) adds that to the result's own shape.
+        # A failed call names refused paths (``refusals.failed_result``): a successful read's text is the file's
+        # data. A frame that says whether the call failed (``is_error``) adds that to the result's own shape. A
+        # terminal or execute_code call that did not fail names only denied paths its command or code named, and
+        # is asked only for one the host has (``raise_access``).
         status = "error" if payload.get("is_error") is True else None
-        found = refused_paths(str(payload.get("name") or ""), args, result, status=status)
+        name = str(payload.get("name") or "")
+        found = refused_paths(name, args, result, status=status)
         if not found:
             return
+        must_exist = not failed_result(name, result, status)
         key = self._chat_of(sid) if isinstance(sid, str) and sid else None
 
         async def raise_all():
@@ -2687,7 +2709,8 @@ class Cards:
             for path, access, missing in found:
                 if raised >= MAX_ACCESS_CARDS_PER_RESULT:
                     break
-                status, _ = await self.raise_access(str(path), access, key=key, origin="tool.complete", missing=missing)
+                status, _ = await self.raise_access(str(path), access, key=key, origin="tool.complete",
+                                                    missing=missing, must_exist=must_exist)
                 raised += status == 200
 
         try:
