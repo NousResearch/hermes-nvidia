@@ -12,7 +12,8 @@ websites.
 3. Flip the switch and confirm.
    The desktop asks "Let the openshell plugin run the “sbtest” profile?"; choose
    **Switch to openshell**.
-4. Wait for the page to go from "Starting sandbox…" to **Running**, usually 10 to 25 seconds.
+4. Wait for the page to go from "Starting sandbox…" to **Running**.
+   Most starts take 10 to 25 seconds. The page waits up to 4 minutes for a slow one.
    The status bar then shows **Sandboxed**.
 
 The switch does not turn on for the default profile yet.
@@ -29,6 +30,9 @@ What the switch does:
 
 Because the launcher is a login service, the sandbox starts again after you sign in, until you
 switch it off.
+
+If the window is closed before the sandbox runs, the plugin undoes the start, and the profile
+keeps running on the host.
 
 ## Turn the sandbox off
 

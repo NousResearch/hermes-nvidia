@@ -1933,4 +1933,52 @@ try {
   out.down.error = String(error && error.stack ? error.stack : error)
 }
 
+// A switch-on asked for in short requests (tests/test_desktop_switch_js.py): while the sandbox is still starting the
+// host route answers `pending`, and the page sends the same request again until the final answer, or an error, comes.
+out.waited = {}
+try {
+  const address = { profile: 'work', url: 'http://127.0.0.1:47972', token: 'tok', undo_ticket: 'undo-1' }
+  const stillStarting = { pending: true, profile: 'work' }
+  const inTurn = answers => {
+    let asked = 0
+    return () => {
+      const next = answers[Math.min(asked++, answers.length - 1)]
+      if (next instanceof Error) throw next
+      return next
+    }
+  }
+  const asksFirst = async input => {
+    log.push({ set: Object.keys(input).sort(), switching: P.switchState() })
+    log.push({ prepared: await input.prepare() })
+    return { applied: true }
+  }
+  const switchOn = async (answers, { features = { prepare: true, beforeApply: true, purpose: true }, statuses = [on], desktop = asksFirst } = {}) => {
+    reset(features)
+    onBodies.length = 0
+    P.useRest(fakeRest({ statuses, onSwitchOn: inTurn(answers) }))
+    host.setProfileBackend = desktop
+    await P.turnOn('work', queryClient)
+    return { log: [...log], bodies: [...onBodies], switching: P.switchState() }
+  }
+  out.waited.slow = await switchOn([stillStarting, stillStarting, address])
+  out.waited.answersAtOnce = await switchOn([address])
+  out.waited.failsLater = await switchOn([stillStarting, new Error('504: {"detail": "The sandbox didn\'t start within 240 seconds."}')], { statuses: [off] })
+  out.waited.olderDesktop = await switchOn([stillStarting, address], {
+    features: null,  // no host.profileBackendFeatures: the desktop is asked after the sandbox started
+    desktop: async input => {
+      log.push({ set: Object.keys(input).sort(), switching: P.switchState() })
+      return { applied: true }
+    }
+  })
+  out.waited.refusedAfterTheWait = await switchOn([stillStarting, address], {
+    statuses: [off],
+    desktop: async input => {
+      await input.prepare()
+      throw new Error('Only loopback URLs')
+    }
+  })
+} catch (error) {
+  out.waited.error = String(error && error.stack ? error.stack : error)
+}
+
 process.stdout.write(JSON.stringify(out))

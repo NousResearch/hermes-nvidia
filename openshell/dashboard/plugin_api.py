@@ -5,7 +5,9 @@ Mounted at ``/api/plugins/openshell/`` by the host backend; each request is alre
 on the host before anything is forwarded, so the copy of this file inside a sandbox is unreachable.
 Both read and write the same host-only spec (``<hermes root>/openshell/<profile>/spec.yaml``), so a
 profile's folders and network are already set when its sandbox is turned on. ``switch/on`` turns it
-on; turning it off happens on the launcher, which owns the sandbox by then.
+on; turning it off happens on the launcher, which owns the sandbox by then. A request here is cut by Hermes
+after 60 seconds when the profile's plugin host serves it, so ``switch/on`` answers in short requests when the
+page asks it to (``wait``).
 ``handback`` lists what the last sandbox session changed among the settings and files that run on this
 computer when that session ended without a review; ``switch/on`` then needs the answer first
 (``{"handback": "revert" | "keep"}``, launcher/switch.py ``previous_session``).
@@ -124,14 +126,25 @@ def switch_on(body: Any = Body(None)):
 
     When the last sandbox session ended without a review, its changes need an answer first: without
     ``{"handback": "revert" | "keep"}`` nothing starts and nothing changes (409 ``handback_needs_answer``; the
-    list is ``GET handback``). ``seen`` is ``{row id: state}`` of the rows the page showed, for a keep."""
+    list is ``GET handback``). ``seen`` is ``{row id: state}`` of the rows the page showed, for a keep.
+
+    With ``{"wait": seconds}`` the request is held that long at most (25 seconds whatever it asks for). While
+    the sandbox is still starting the answer is 202 ``{"pending": true, "profile": ...}`` and the page sends
+    the same request again; the start goes on in between, one per profile, and a start nobody asks about any
+    more is undone. The final answer and every refusal are the ones a request without ``wait`` gets, which is
+    held until the sandbox runs."""
     layout = _profile()
     data = body if isinstance(body, dict) else {}
-    answer, seen = data.get("handback"), data.get("seen")
+    answer, seen, wait = data.get("handback"), data.get("seen"), data.get("wait")
     if answer not in (None, "revert", "keep") or not (seen is None or isinstance(seen, dict)):
         raise HTTPException(status_code=422, detail='handback is "revert" or "keep".')
+    if not (wait is None or (isinstance(wait, (int, float)) and not isinstance(wait, bool) and wait >= 0)):
+        raise HTTPException(status_code=422, detail="wait is a number of seconds.")
     try:
-        return _switch.turn_on(layout, handback_answer=answer, handback_seen=seen)
+        if wait is None:
+            return _switch.turn_on(layout, handback_answer=answer, handback_seen=seen)
+        started = _switch.turn_on_within(layout, wait, handback_answer=answer, handback_seen=seen)
+        return JSONResponse(status_code=202, content=started) if started.get("pending") else started
     except _switch.HandbackNeeded as exc:
         return JSONResponse(status_code=409, content={"detail": str(exc), "code": "handback_needs_answer",
                                                       "unanswered": int(exc.view.get("unanswered") or 0)})

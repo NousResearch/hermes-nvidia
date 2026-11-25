@@ -12,6 +12,7 @@ it stops. Everything runs in temp folders with stand-ins for the service and the
 """
 import argparse
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,7 @@ from openshell.launcher import switch as SW
 from test_handback_wiring import LIST, _ids, _in_use, _text_and_settings, _the_report, _user_home
 from test_pins import _serve_args, layout, serve  # noqa: F401  (fixtures: a layout, `sandbox serve` up to the launcher)
 from test_switch_flow import FakeDriver, FakeRuntime, FakeService, _on, env  # noqa: F401  (the switch fixture)
+from test_switch_flow import _runs_once_asked  # a launcher that takes a while to report its sandbox running
 
 PLANTED = "sh -c 'id >> /tmp/markers/w.log'"  # the secret source the sandbox wrote (TH.plant_the_four)
 NEEDS = "hermes sandbox: 7 changes need an answer. Run again with --revert or --keep.\n"
@@ -471,3 +473,113 @@ def test_a_review_that_cannot_run_when_a_foreground_serve_stops_is_said_and_the_
     CLI._own_switch_off(layout)
     assert capsys.readouterr().err == "hermes sandbox: Couldn't review the sandbox's changes (OSError: unreadable).\n"
     assert H.is_open(layout.state_dir) and not P.present(layout)
+
+
+# -- the page's route answers in short requests (launcher/switch.py ``turn_on_within``) -------------------------
+
+FINAL = {"profile", "plugin", "url", "token", "undo_ticket", "service", "status", "handback"}
+MOVE_FIRST = "A key is written in config.yaml, where the sandbox could read it. Move it to .env first."
+
+
+@pytest.fixture
+def page(env, monkeypatch):  # noqa: F811
+    """The page's route for the fixture's profile, with the fixture's stand-ins behind both ways of turning on."""
+    lay = env["layout"]
+    api = SR._plugin_api()
+    monkeypatch.setattr(api._layout, "current_profile", lambda: lay)
+    monkeypatch.setattr(api, "_switch", SW)
+    fakes = dict(runtime=env["runtime"], manager=env["manager"], environ={}, make_driver=lambda spec: FakeDriver(),
+                 sleep=lambda s: time.sleep(0.002))
+    starts = SW.Starts(tick=0.01)
+    on, within = SW.turn_on, SW.turn_on_within
+    monkeypatch.setattr(SW, "turn_on", lambda layout_, **kw: on(layout_, **fakes, **kw))
+    monkeypatch.setattr(SW, "turn_on_within",
+                        lambda layout_, wait, **kw: within(layout_, wait, starts=starts, **fakes, **kw))
+    return api
+
+
+def _answer(response):
+    return response.status_code, json.loads(response.body)
+
+
+def test_the_route_answers_pending_while_the_sandbox_starts_and_marks_with_the_final_answer(env, page):  # noqa: F811
+    env["launcher"]["state"] = "starting"
+    code, body = _answer(page.switch_on({"wait": 0}))
+    assert code == 202 and body["pending"] is True and not {"url", "token", "undo_ticket"} & set(body)
+    assert "mark" not in env["log"] and not env["markers"].marked
+    env["launcher"]["state"] = "running"
+    final = page.switch_on({"wait": 5})
+    assert isinstance(final, dict) and set(final) == FINAL
+    assert final["url"].startswith("http://127.0.0.1:") and final["undo_ticket"] == "undo-ticket"
+    assert final["profile"] == "work" and final["handback"] is None
+    assert env["log"][-1] == "mark" and env["log"].count("install") == 1 and "work" in env["markers"].marked
+
+
+def test_a_request_that_names_no_wait_is_held_until_the_sandbox_runs(env, page):  # noqa: F811
+    _runs_once_asked(env)
+    final = page.switch_on({})  # an older page: one request, and its answer is the final one
+    assert isinstance(final, dict) and set(final) == FINAL and final["undo_ticket"] == "undo-ticket"
+    assert env["log"][-1] == "mark" and env["log"].count("GET status") >= 3 and env["log"].count("install") == 1
+
+
+def test_the_last_sessions_changes_are_asked_about_in_the_first_answer_and_nothing_starts(env, page):  # noqa: F811
+    lay = _unanswered(env)
+    pin_before, home_before = P.load(lay), TH.tree_bytes(lay.home)
+    refused = _answer(page.switch_on({"wait": 5}))
+    assert refused == (409, {"detail": "7 changes need an answer.", "code": "handback_needs_answer", "unanswered": 7})
+    assert refused == _answer(page.switch_on({}))  # the same answer a request without a wait gets
+    assert TH.tree_bytes(lay.home) == home_before and P.load(lay) == pin_before and _pinned_command(lay) is None
+    assert not lay.spec_path.exists() and env["log"] == [] and env["services"] == []
+    final = page.switch_on({"wait": 5, "handback": "revert"})
+    assert isinstance(final, dict) and final["handback"]["reverted"] and "work" in env["markers"].marked
+
+
+def test_a_refusal_the_page_can_act_on_keeps_its_code_and_keys_in_the_first_answer(env, page, monkeypatch):  # noqa: F811
+    def refuse(layout_):
+        error = SW.SwitchError(MOVE_FIRST, 422)
+        error.code = "key_in_config"
+        error.keys = [{"path": "model.api_key", "env": "MODEL_API_KEY", "value": "never sent"}]
+        raise error
+
+    monkeypatch.setattr(SW, "refuse_unready", refuse)
+    refused = _answer(page.switch_on({"wait": 5}))
+    assert refused == (422, {"detail": MOVE_FIRST, "code": "key_in_config",
+                             "keys": [{"path": "model.api_key", "env": "MODEL_API_KEY"}]})
+    assert refused == _answer(page.switch_on({}))
+    assert env["services"] == [] and env["log"] == []
+
+
+def test_a_plain_refusal_keeps_its_status_and_sentence_in_the_first_answer(env, page):  # noqa: F811
+    from fastapi import HTTPException
+
+    env["markers"].marked.add("work")
+    seen = []
+    for body in ({"wait": 5}, {}):
+        with pytest.raises(HTTPException) as err:
+            page.switch_on(body)
+        seen.append((err.value.status_code, err.value.detail))
+    assert seen[0] == seen[1] and seen[0][0] == 409 and "still switched on for this profile" in seen[0][1]
+    with pytest.raises(HTTPException) as err:
+        page.switch_on({"wait": "soon"})
+    assert err.value.status_code == 422 and env["services"] == []
+
+
+def test_a_start_that_fails_after_a_pending_answer_keeps_its_status_and_sentence(env, page):  # noqa: F811
+    from fastapi import HTTPException
+
+    env["launcher"]["state"] = "starting"
+    assert page.switch_on({"wait": 0}).status_code == 202
+    env["launcher"].update(state="failed", error="sandbox exited with 1")
+    with pytest.raises(HTTPException) as err:
+        page.switch_on({"wait": 5})
+    assert (err.value.status_code, err.value.detail) == (502, "The sandbox didn't start: sandbox exited with 1")
+    assert "mark" not in env["log"] and env["services"][0].state() == "absent"
+
+
+def test_sandbox_on_in_a_terminal_still_waits_for_the_sandbox_in_one_call(env, cli, capsys):  # noqa: F811
+    _runs_once_asked(env)
+    assert cli("on") == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["profile"] == "work" and printed["url"].startswith("http://127.0.0.1:")
+    assert printed["state"] == "running" and "pending" not in printed
+    assert env["log"][-1] == "mark" and env["log"].count("install") == 1 and "work" in env["markers"].marked

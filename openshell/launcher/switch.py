@@ -31,6 +31,14 @@ and ``turn_on`` re-runs it and refuses with the same reason.
    the user cancels the confirm that follows), the page spends the ticket on the launcher's
    ``switch/off`` route (the host route can't be used: the marker already refuses the profile there).
 
+``turn_on`` does all four in one call and returns when the sandbox runs (``hermes sandbox on``, and a page that
+sends no ``wait``). The page's route cannot hold one request that long: Hermes cuts a request to a profile's plugin
+host after 60 seconds, and a sandbox can take longer to start. So the page asks in short requests
+(``turn_on_within``, ``Starts``): steps 1 and 2 run in a thread of their own, one per profile, and each request
+waits for them a few seconds and answers ``pending``; steps 3 and 4 run inside the request that returns the final
+answer, so the profile is still marked right before the answer the desktop routes by. A start whose answer nobody
+asks for any more is undone like one that failed, and so is one whose process ended in the middle (``lost_start``).
+
 Turning off (from the sandboxed page, served by the launcher). The desktop must never see the
 profile marked while it no longer routes it to the launcher (it fails closed with a full-screen
 "Hermes couldn't start"), so the launcher tears down BEFORE the desktop override goes:
@@ -91,20 +99,23 @@ ended; nothing here can tell it from the user's, and no list is shown.
 """
 from __future__ import annotations
 
+import contextvars
 import hmac
 import json
 import logging
+import os
 import secrets
 import threading
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
 from . import handback, pins
-from .login_service import (LoginService, ServiceError, define, launcher_log, manager_for, remove_definition,
-                            switched_on, write_definition)
+from .login_service import (LoginService, ServiceError, define, launcher_log, launcher_state_alive, manager_for,
+                            process_start_ticks, remove_definition, switched_on, write_definition)
 
 log = logging.getLogger("openshell.switch")
 
@@ -117,6 +128,15 @@ ENDING_WAIT = 30.0
 HANDBACK_TIMEOUT = 120.0
 SWITCH_OFF_TIMEOUT = 2 * HANDBACK_TIMEOUT + 120.0  # how long `hermes sandbox off` waits for a running launcher
 TICKET_TTL = 900.0  # the native confirm may sit open for a while
+# The longest one request of the page's switch-on is held, whatever it asks for: Hermes cuts a request to a
+# profile's plugin host after 60 seconds.
+REQUEST_WAIT_MAX = 25.0
+# A start no request has asked about for this long is undone: the window was closed, or the page stopped asking.
+# A page that waits asks again as soon as it is answered, so its requests are never this far apart.
+UNCOLLECTED_AFTER = 45.0
+# Which process is starting the sandbox, kept beside the launcher's state while a start is neither marked nor undone.
+START_RECORD = "switch-on.json"
+NOT_FINISHED = "The sandbox didn't finish starting. Turn it on again."
 SWITCH_ROUTE = "/api/plugins/openshell/switch"
 
 
@@ -424,6 +444,32 @@ def turn_on(layout, *, handback_answer: Optional[str] = None, handback_seen: Opt
     (``"revert"``, ``"keep"`` or None) answers the list of a last session that ended without a review
     (``previous_session``); with such changes and no answer ``HandbackNeeded`` is raised and nothing was
     changed. *handback_seen* is ``{row id: state}`` of the rows the user was shown, for a ``keep``."""
+    return _finish(_start(layout, handback_answer=handback_answer, handback_seen=handback_seen, runtime=runtime,
+                          manager=manager, environ=environ, timeout=timeout, make_driver=make_driver, sleep=sleep))
+
+
+@dataclass
+class _Started:
+    """A switch-on between its two parts: the launcher's service is registered and its sandbox runs; nothing is
+    marked yet."""
+    layout: object
+    service: LoginService
+    port: int
+    token: str
+    status: dict
+    handed_back: Optional[dict]
+    note: Optional[str]
+    taken: bool  # this switch-on recorded the baseline
+    sleep: Callable[[float], None]
+
+
+def _start(layout, *, handback_answer: Optional[str] = None, handback_seen: Optional[dict] = None, runtime=None,
+           manager: Callable = manager_for, environ: Optional[dict] = None,
+           timeout: float = READY_TIMEOUT, make_driver: Optional[Callable] = None,
+           sleep: Callable[[float], None] = time.sleep) -> _Started:
+    """The first part of a switch-on, everything up to a sandbox that runs (steps 1 and 2 of the module
+    docstring). It refuses before anything starts, or undoes what it started and raises; the profile is not
+    marked here."""
     from .driver import DriverUnavailable
     from .layout import LayoutError, remove_legacy_secret_copies
     from .spec import ensure_token, free_loopback_port, load_spec, network_policy, save_spec
@@ -477,12 +523,27 @@ def turn_on(layout, *, handback_answer: Optional[str] = None, handback_seen: Opt
     except Exception as exc:
         pins.release(layout)
         raise SwitchError(f"Couldn't save a copy of this profile's settings: {exc}", 500) from None
-    marked = False
+    _note_start(layout)
     try:
         write_definition(defn)
         service.install()
         service.start()
         status = wait_ready(layout, port, token, service, timeout, sleep=sleep)
+    except BaseException as exc:
+        _undo(layout, service, port, token, False, sleep, baseline["taken"])
+        if isinstance(exc, ServiceError):
+            raise SwitchError(f"Couldn't register the sandbox to start at login: {exc}", 502) from None
+        raise
+    return _Started(layout, service, port, token, status, handed_back, note, baseline["taken"], sleep)
+
+
+def _finish(started: _Started) -> dict:
+    """The second part of a switch-on (steps 3 and 4): take the undo ticket, mark the profile, tell the host
+    gateway, and return the answer. Short, so the page's route runs it inside the request it answers. A failure
+    undoes the whole switch-on."""
+    layout, service, port, token = started.layout, started.service, started.port, started.token
+    marked = False
+    try:
         code, minted = launcher_call(port, token, "POST", "switch/ticket", {})
         if code != 200 or not isinstance(minted, dict) or not minted.get("ticket"):
             raise SwitchError("The sandbox started but didn't hand out an undo ticket.", 502)
@@ -492,21 +553,20 @@ def turn_on(layout, *, handback_answer: Optional[str] = None, handback_seen: Opt
         mark(layout)
         marked = True
         host_drop(layout)
-    except BaseException as exc:
-        _undo(layout, service, port, token, marked, sleep, baseline["taken"])
-        if isinstance(exc, ServiceError):
-            raise SwitchError(f"Couldn't register the sandbox to start at login: {exc}", 502) from None
+    except BaseException:
+        _undo(layout, service, port, token, marked, started.sleep, started.taken)
         raise
+    _forget_start(layout)
     return {"profile": layout.name, "plugin": PLUGIN_ID, "url": f"http://127.0.0.1:{port}", "token": token,
-            "undo_ticket": minted["ticket"], "service": service.kind, "status": status, "handback": handed_back,
-            **({"note": note} if note else {})}
+            "undo_ticket": minted["ticket"], "service": service.kind, "status": started.status,
+            "handback": started.handed_back, **({"note": started.note} if started.note else {})}
 
 
 def _undo(layout, service: LoginService, port: int, token: str, marked: bool, sleep, taken: bool = False) -> None:
     """*taken*: this switch-on recorded the baseline (an older one that was still open is not its to end)."""
     for step in (lambda: _stop_service(layout, service, port, token, sleep), lambda: pins.release(layout),
                  *([lambda: _hand_back_undone(layout)] if taken else []),
-                 lambda: remove_definition(layout), service.uninstall,
+                 lambda: remove_definition(layout), lambda: _forget_start(layout), service.uninstall,
                  *([lambda: clear_marker(layout), lambda: host_serve(layout)] if marked else [])):
         try:
             step()
@@ -523,6 +583,210 @@ def _hand_back_undone(layout) -> None:
     sandbox wrote in place instead, drop the revert here and only close."""
     if not handback.revert(layout.home, layout.state_dir, "all")["left"]:
         handback.close(layout.state_dir)
+
+
+# -- a switch-on asked for in short requests (the page's route) ------------------------------------
+
+def _note_start(layout) -> None:
+    """Record which process is about to write the service definition and start the launcher. The record goes
+    when the switch-on has marked the profile or undone itself (``_finish``, ``_undo``); one that outlives its
+    process says the switch-on was cut off in between (``lost_start``). Never holds the switch-on."""
+    pid = os.getpid()
+    record = {"pid": pid, "since": time.time(), "start_ticks": process_start_ticks(pid)}
+    try:
+        layout.state_dir.mkdir(parents=True, exist_ok=True)
+        (layout.state_dir / START_RECORD).write_text(json.dumps(record), encoding="utf-8")
+    except OSError as exc:
+        log.warning("the start of profile %s's sandbox could not be recorded: %s", layout.name, _why(exc))
+
+
+def _forget_start(layout) -> None:
+    try:
+        (layout.state_dir / START_RECORD).unlink(missing_ok=True)
+    except OSError as exc:
+        log.warning("the record of profile %s's start could not be removed: %s", layout.name, _why(exc))
+
+
+def lost_start(layout, alive: Callable[[Optional[dict]], bool] = launcher_state_alive) -> bool:
+    """Whether a switch-on of this profile was cut off: its record is still there and the process that wrote it
+    no longer runs. The process that serves the page's route does not outlive Hermes, and Hermes replaces it
+    when it dies; a start in flight then leaves the launcher's service registered and running with the profile
+    unmarked, and nothing in memory that knows of it."""
+    try:
+        record = json.loads((layout.state_dir / START_RECORD).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return not alive(record)
+
+
+def undo_lost_start(layout, *, runtime=None, manager: Callable = manager_for, environ: Optional[dict] = None,
+                    sleep: Callable[[float], None] = time.sleep) -> bool:
+    """Undo what a switch-on that was cut off left behind, as a failed one undoes itself (``_undo``): the service
+    stopped and removed, the pins released, the home put back as it was recorded. Returns whether there was
+    anything to undo. A profile that is marked got its answer, and one without a service definition has been
+    switched off since: for both only the record goes."""
+    if is_marked(layout) or not switched_on(layout):
+        _forget_start(layout)
+        return False
+    from .layout import LayoutError
+    from .spec import load_spec
+
+    if runtime is None:
+        from .layout import current_runtime
+
+        runtime = current_runtime()
+    try:
+        port = int(load_spec(layout).get("port") or 0)
+    except (LayoutError, OSError, ValueError):
+        port = 0
+    try:
+        token = layout.token_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        token = ""
+    # The definition is written after the baseline is recorded, so the open baseline is that switch-on's own.
+    _undo(layout, manager(define(layout, runtime, environ)), port, token, False, sleep, True)
+    return True
+
+
+class _Job:
+    """One start of one profile's sandbox, shared by every request that asks for it."""
+
+    def __init__(self, layout, how: dict, now: float):
+        self.layout, self.how = layout, how
+        self.state = "starting"  # then "ready" and "finishing", or "ending"; at last "over"
+        self.asked = now  # when a request last asked for it
+        self.left = False  # no request asked in time: it ends without an answer to give
+        self.started: Optional[_Started] = None
+        self.answer: Optional[dict] = None
+        self.error: Optional[BaseException] = None
+
+
+class Starts:
+    """The switch-ons in flight in this process, one per profile, for requests that each wait a few seconds.
+
+    ``ask`` begins a profile's start in a thread of its own, or joins the one in flight, and waits for it as
+    long as the request allows. While the sandbox is still starting it answers ``{"pending": True}`` and the
+    caller asks again. Once the sandbox runs, the request that is asking finishes the switch-on itself
+    (``_finish``: the mark comes last, in the request whose answer the desktop routes by); requests waiting
+    beside it get the same answer. What refuses or fails the start is raised in the request that asks next,
+    as ``turn_on`` raises it.
+
+    A start no request has asked about for ``UNCOLLECTED_AFTER`` seconds ends without an answer: it is undone
+    like one that failed and the profile is never marked for it. A request that comes after that begins
+    another. *clock* tells how long ago a request asked; *tick* is how often a waiting thread looks again.
+    """
+
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic, tick: float = 0.5,
+                 alive: Callable[[Optional[dict]], bool] = launcher_state_alive):
+        self._clock, self._tick, self._alive = clock, tick, alive
+        self._changed = threading.Condition()
+        self._jobs: dict = {}
+
+    def ask(self, layout, wait: float, **how) -> dict:
+        """*how* is what ``turn_on`` takes; it is used by the request that begins the start."""
+        key = (str(layout.root), layout.name)
+        until = time.monotonic() + min(max(float(wait), 0.0), REQUEST_WAIT_MAX)
+        with self._changed:
+            while True:
+                job = self._jobs.get(key)
+                if job is None:
+                    job = self._jobs[key] = _Job(layout, how, self._clock())
+                    # The start runs as the request that began it does: for the same profile.
+                    context = contextvars.copy_context()
+                    threading.Thread(target=context.run, args=(self._run, key, job), daemon=True,
+                                     name=f"openshell-switch-on-{layout.name}").start()
+                while job.state in ("starting", "finishing", "ending"):
+                    job.asked = self._clock()
+                    remaining = until - time.monotonic()
+                    if remaining <= 0:
+                        return {"pending": True, "profile": layout.name}
+                    self._changed.wait(min(remaining, self._tick))
+                job.asked = self._clock()
+                if not (job.state == "over" and job.left):
+                    break
+                # It ended because nobody asked: this request begins another.
+                if self._jobs.get(key) is job:
+                    del self._jobs[key]
+            if job.state == "over":
+                if self._jobs.get(key) is job:
+                    del self._jobs[key]  # told once
+                    self._changed.notify_all()
+                if job.error is not None:
+                    raise job.error
+                return job.answer
+            job.state = "finishing"  # the sandbox runs, and this request is the one that takes the answer
+        try:
+            answer = _finish(job.started)
+        except BaseException as exc:
+            self._over(key, job, error=exc if isinstance(exc, Exception) else SwitchError(NOT_FINISHED, 409))
+            raise
+        self._over(key, job, answer=answer)
+        return answer
+
+    def _over(self, key, job: _Job, *, answer: Optional[dict] = None, error: Optional[BaseException] = None) -> None:
+        with self._changed:
+            job.answer, job.error, job.state = answer, error, "over"
+            if self._jobs.get(key) is job:
+                del self._jobs[key]
+            self._changed.notify_all()
+
+    def _unasked(self, job: _Job) -> bool:
+        return self._clock() - job.asked > UNCOLLECTED_AFTER
+
+    def _run(self, key, job: _Job) -> None:
+        """The thread of one start: the first part of the switch-on, then the wait for a request to take it."""
+        layout, how = job.layout, job.how
+        nap = how.get("sleep") or time.sleep
+
+        def sleep(seconds: float) -> None:
+            # Each wait of the start first asks whether anyone still waits for it. Said once: the undo that
+            # follows waits with the same call.
+            if not job.left and self._unasked(job):
+                job.left = True
+                raise SwitchError(NOT_FINISHED, 409)
+            nap(seconds)
+
+        started, error = None, None
+        try:
+            if lost_start(layout, self._alive) and undo_lost_start(
+                    layout, runtime=how.get("runtime"), manager=how.get("manager") or manager_for,
+                    environ=how.get("environ"), sleep=nap):
+                raise SwitchError(NOT_FINISHED, 409)
+            started = _start(layout, **{**how, "sleep": sleep})
+            started.sleep = nap
+        except BaseException as exc:
+            error = exc if isinstance(exc, Exception) else SwitchError(NOT_FINISHED, 409)
+        if started is not None:
+            with self._changed:
+                job.started, job.state = started, "ready"
+                self._changed.notify_all()
+                while job.state == "ready" and not self._unasked(job):
+                    self._changed.wait(self._tick)
+                if job.state != "ready":
+                    return  # a request took it: the profile is marked there, or the switch-on undone there
+                job.state, job.left = "ending", True
+            _undo(layout, started.service, started.port, started.token, False, nap, started.taken)
+            error = SwitchError(NOT_FINISHED, 409)
+        with self._changed:
+            job.error, job.state = error, "over"
+            self._changed.notify_all()
+            # What failed is told to the request that asks next, for as long as one may still come.
+            while self._jobs.get(key) is job and not job.left and not self._unasked(job):
+                self._changed.wait(self._tick)
+            if self._jobs.get(key) is job:
+                del self._jobs[key]
+
+
+_STARTS = Starts()
+
+
+def turn_on_within(layout, wait: float, *, starts: Optional[Starts] = None, **how) -> dict:
+    """``turn_on`` for a caller whose requests must each end within seconds (the page's route): the answer of
+    ``turn_on``, or ``{"pending": True, "profile": ...}`` when the sandbox is still starting after *wait* seconds
+    (``REQUEST_WAIT_MAX`` at most); the caller then asks again. A second caller for the same profile joins the
+    start in flight. Raises what ``turn_on`` raises, in the request that asks when it happens. *how* is what
+    ``turn_on`` takes."""
+    return (starts or _STARTS).ask(layout, wait, **how)
 
 
 def unregister(layout, runtime=None, manager: Callable = manager_for) -> LoginService:

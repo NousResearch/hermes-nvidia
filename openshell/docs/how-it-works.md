@@ -31,7 +31,10 @@ The order makes a half-finished switch fail closed.
    and starts the launcher as a login service.
 4. The plugin waits until the launcher answers and its sandbox runs.
    A failure up to here undoes step 3. Nothing was marked.
-5. The plugin marks the profile as run elsewhere, last. From then on the host refuses to run it.
+   The Sandbox page asks for the result in short requests while it waits.
+   If the page stops asking, the plugin undoes step 3 in the same way.
+5. The plugin marks the profile as run elsewhere, last, in the request that tells the page the
+   sandbox runs. From then on the host refuses to run it.
 6. The desktop routes the profile to the launcher.
 
 ## What turning off does

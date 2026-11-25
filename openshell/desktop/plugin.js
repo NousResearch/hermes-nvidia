@@ -10,7 +10,8 @@
  * The switch (order and reasons: launcher/switch.py). On: host.setProfileBackend asks the user FIRST
  * (with the plugin's `purpose` line); only after a yes does its `prepare` call the host route, which
  * starts the launcher as a login service, waits for the sandbox and marks the profile last; the desktop
- * applies the override as soon as prepare resolves. A Cancel starts nothing. Desktops without `prepare`
+ * applies the override as soon as prepare resolves. The route is asked in short requests until the sandbox
+ * runs (`startSandbox`): the mark comes with the last answer. A Cancel starts nothing. Desktops without `prepare`
  * (host.profileBackendFeatures) get the old order: start, then ask, and a cancel spends the route's undo
  * ticket on the launcher. Off: take a ticket from the launcher, host.clearProfileBackend asks the user,
  * then (beforeApply) the ticket goes straight to the launcher's switch/off over loopback, which stops
@@ -86,6 +87,11 @@ const CONFIG_POLL_MS = 5000
 const POLL_TIMEOUT_MS = 15_000
 const RESTART_TIMEOUT_MS = 240_000
 const SWITCH_TIMEOUT_MS = 300_000
+// How long the host route may hold one request of a switch-on, in seconds. The desktop's backend cuts a request
+// to a profile's plugins after 60 seconds, and a sandbox can take longer than that to start.
+const SWITCH_WAIT_S = 20
+// A route that answers "still starting" sooner than that is not asked again at once.
+const SWITCH_ASK_GAP_MS = 250
 const HANDOFF_POLL_MS = 1500
 const HANDOFF_WAIT_MS = 90_000
 
@@ -114,6 +120,7 @@ const T = {
   cantTurnOn: "Can't turn on",
   // One name per state, the desktop's own words (status bar, composer).
   turningOn: 'Starting sandbox…',
+  startTimedOut: "The sandbox didn't start in time.",
   turningOff: 'Stopping sandbox…',
   needsDesktop: 'Needs a newer version of the desktop app.',
   stuckOff: (profile, detail) => `Couldn't finish turning off: ${detail} Run "${cliOff(profile)}".`,
@@ -1010,6 +1017,30 @@ const hostAsksFirst = () => Boolean(host.profileBackendFeatures?.prepare)
  *  (`providersView`'s note). The confirm takes one line of 160 characters; a longer one is not cut short. */
 const confirmLine = note => (typeof note?.reason === 'string' && note.reason && note.reason.length <= 160 ? note.reason : T.purpose)
 
+/** Start the sandbox through the host route and resolve its final answer: the launcher's address, its token and
+ *  an undo ticket. The route holds a request for `wait` seconds at most and answers `pending` while the sandbox is
+ *  still starting; the same request then goes out again, until the final answer or an error comes. The route
+ *  undoes a start that is no longer asked about, so an error here leaves nothing for the page to undo. A backend
+ *  that does not read `wait` holds the one request and answers it with the final answer. */
+async function startSandbox(body) {
+  const deadline = Date.now() + SWITCH_TIMEOUT_MS
+
+  for (;;) {
+    const asked = Date.now()
+    const answer = await rest('/switch/on', { body: { ...body, wait: SWITCH_WAIT_S }, method: 'POST', timeoutMs: SWITCH_TIMEOUT_MS })
+
+    if (!answer?.pending) {
+      return answer
+    }
+
+    if (Date.now() >= deadline) {
+      throw new Error(T.startTimedOut)
+    }
+
+    await sleep(Math.max(0, SWITCH_ASK_GAP_MS - (Date.now() - asked)))
+  }
+}
+
 /** Turn the sandbox on. `options.handback` is the card's answer ('revert' or 'keep') to `options.view`, the list
  *  of what the last sandbox session left without a review; the host route reviews that session before it pins
  *  anything, and refuses (handback_needs_answer) while its changes have no answer. `options.block` is what keeps
@@ -1047,7 +1078,7 @@ async function turnOn(profile, queryClient, options = {}) {
         purpose: confirmLine(options.note),
         prepare: async () => {
           $switching.set({ profile, to: 'on' })
-          started = await rest('/switch/on', { body, method: 'POST', timeoutMs: SWITCH_TIMEOUT_MS })
+          started = await startSandbox(body)
           handedBack = started.handback
 
           return { url: started.url, token: started.token }
@@ -1075,7 +1106,7 @@ async function turnOn(profile, queryClient, options = {}) {
 
     // Older desktops: start, then ask (the confirm then shows the launcher's address as a detail line).
     $switching.set({ profile, to: 'on' })
-    started = await rest('/switch/on', { body, method: 'POST', timeoutMs: SWITCH_TIMEOUT_MS })
+    started = await startSandbox(body)
     handedBack = started.handback
     const { url, token, undo_ticket: undo } = started
     const { applied } = await host.setProfileBackend({ plugin: PLUGIN_ID, profile: started.profile, purpose: confirmLine(options.note), token, url })

@@ -39,6 +39,16 @@ The Sandbox page says why, with **Check again**.
 | "This user can't use Docker." | Add this user to the `docker` group, sign in again, then check again |
 | "Docker isn't running." | Start Docker, then check again |
 
+### The sandbox did not start
+
+| The page says | What to do |
+|---|---|
+| "The sandbox didn't start within 240 seconds." | Turn the switch on again. On Windows, run `hermes -p <profile> sandbox runtime install` first if the sandbox's programs are not installed yet |
+| "The sandbox didn't finish starting. Turn it on again." | Turn the switch on again. Hermes was restarted while the sandbox was starting |
+
+In both cases the plugin has stopped the launcher and removed the login service, and the profile
+runs on the host.
+
 ### Other reasons
 
 | The page says | What to do |

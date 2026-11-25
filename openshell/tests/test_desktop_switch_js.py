@@ -389,6 +389,13 @@ ON_BUTTONS = [{"text": "Revert and turn on", "disabled": False, "variant": None}
 STARTED = {"prepared": {"url": "http://127.0.0.1:47972", "token": "tok"}}
 
 
+def _asked(bodies):
+    """What each switch-on request sent, apart from how long the host route may hold it: a number of seconds
+    that keeps every request short."""
+    assert all(isinstance(body.get("wait"), (int, float)) and 0 < body["wait"] <= 25 for body in bodies)
+    return [{key: value for key, value in body.items() if key != "wait"} for body in bodies]
+
+
 def test_a_profile_that_is_off_shows_the_last_sessions_changes_with_buttons_that_turn_on(run):
     review = run["review"]
     assert review["card"]["texts"] == ["Changed in the sandbox", "From the last sandbox session. These run on this computer now."]
@@ -415,7 +422,7 @@ def test_where_the_switch_cannot_turn_on_neither_can_the_cards_buttons(run):
 def test_revert_and_turn_on_sends_the_answer_with_the_switch_on(run):
     done = run["review"]["revert"]
     log = done["log"]
-    assert done["bodies"] == [{"handback": "revert"}]
+    assert _asked(done["bodies"]) == [{"handback": "revert"}]
     assert log[0]["set"] == ["plugin", "prepare", "profile", "purpose"] and log[0]["switching"] is None  # the confirm first
     assert _rests(log)[0] == "/switch/on" and "/handback" not in _rests(log) and STARTED in log
     assert _notes(log) == [{"notify": "Reverted 3 changes.", "kind": "info"}]
@@ -425,7 +432,7 @@ def test_revert_and_turn_on_sends_the_answer_with_the_switch_on(run):
 
 def test_keep_and_turn_on_sends_the_rows_as_they_were_shown(run):
     done = run["review"]["keep"]
-    assert done["bodies"] == [{"handback": "keep", "seen": {row: f"state-of-{row}" for row in SHOWN}}]
+    assert _asked(done["bodies"]) == [{"handback": "keep", "seen": {row: f"state-of-{row}" for row in SHOWN}}]
     # only what was reverted although it was not on the list is said
     assert _notes(done["log"]) == [{"notify": "1 change made after the list was shown was reverted.", "kind": "info"}]
     assert _notes(run["review"]["keepNothingLate"]["log"]) == []
@@ -439,7 +446,7 @@ def test_cancel_in_the_confirm_answers_nothing_and_starts_nothing(run):
 def test_a_switch_on_the_host_refuses_for_the_answer_says_so_and_starts_nothing(run):
     for name, body in (("refused", {"handback": "keep", "seen": {row: f"state-of-{row}" for row in SHOWN}}), ("plainRefused", {})):
         done = run["review"][name]
-        assert done["bodies"] == [body]
+        assert _asked(done["bodies"]) == [body]
         assert _notes(done["log"]) == [{"notify": "Changes need an answer first."}]  # not the bare 409 text
         assert not _steps(done["log"], "fetch") and not _steps(done["log"], "prepared")
         assert _steps(done["log"], "invalidate")  # the page reads the list again: the card shows
@@ -515,3 +522,57 @@ def test_the_page_lists_what_was_kept_for_a_profile_that_is_off_too(run):
     page = run["follow"]["pageOffKept"]
     assert page["listQuery"]["enabled"] is True and page["card"] == 1  # the card renders nothing without rows
     assert page["keptLine"]["count"] == 2 and [i["id"] for i in page["keptLine"]["items"]] == ["cfg:secrets.command", "cron:bbbbbbbbbbbb"]
+
+
+# -- a switch-on asked for in short requests: the page asks again until the final answer --------------------------
+
+STARTING = {"profile": "work", "to": "on"}
+
+
+def _asks(log):
+    return [e for e in _steps(log, "rest") if e["rest"] == "/switch/on"]
+
+
+def test_a_slow_start_is_asked_for_again_until_the_final_answer_and_then_routed(run):
+    assert "error" not in run["waited"], run["waited"].get("error")
+    slow = run["waited"]["slow"]
+    log = slow["log"]
+    assert len(_asks(log)) == 3 and _asked(slow["bodies"]) == [{}, {}, {}]
+    assert slow["bodies"][0] == slow["bodies"][1] == slow["bodies"][2]  # the same request each time
+    assert all(e["switching"] == STARTING for e in _asks(log))  # "Starting sandbox…" for the whole wait
+    [prepared] = _steps(log, "prepared")
+    assert prepared == STARTED and log.index(prepared) > log.index(_asks(log)[-1])  # routed by the final answer only
+    [seed] = _steps(log, "seed")
+    assert seed["value"]["sandboxed"] is True and seed["switching"] == STARTING
+    assert not _steps(log, "fetch") and not _steps(log, "notify") and slow["switching"] is None
+
+
+def test_a_backend_that_answers_once_with_the_address_still_switches_on(run):
+    once = run["waited"]["answersAtOnce"]
+    assert len(_asks(once["log"])) == 1 and _asked(once["bodies"]) == [{}]
+    assert STARTED in once["log"] and _steps(once["log"], "seed")[0]["value"]["sandboxed"] is True
+    assert not _steps(once["log"], "fetch") and not _steps(once["log"], "notify")
+
+
+def test_a_start_that_fails_while_the_page_waits_shows_the_error_and_leaves_the_switch_off(run):
+    failed = run["waited"]["failsLater"]
+    log = failed["log"]
+    assert len(_asks(log)) == 2  # the error ends the asking
+    assert _steps(log, "notify") == [{"notify": "The sandbox didn't start within 240 seconds."}]
+    # nothing was routed, and the page holds nothing to undo: the host route undid what it had started
+    assert not _steps(log, "prepared") and not _steps(log, "fetch") and not _steps(log, "seed")
+    assert failed["switching"] is None and _steps(log, "invalidate")
+
+
+def test_an_older_desktop_waits_for_the_final_answer_before_it_asks(run):
+    log = run["waited"]["olderDesktop"]["log"]
+    assert len(_asks(log)) == 2
+    [asked] = _steps(log, "set")
+    assert asked["set"] == ["plugin", "profile", "purpose", "token", "url"] and log.index(asked) > log.index(_asks(log)[-1])
+
+
+def test_an_address_the_desktop_refuses_after_the_wait_is_undone_with_the_ticket(run):
+    log = run["waited"]["refusedAfterTheWait"]["log"]
+    assert len(_asks(log)) == 2
+    assert _steps(log, "fetch") == [{"fetch": OFF_URL, "body": {"ticket": "undo-1"}}]
+    assert {"notify": "Only loopback URLs"} in log
