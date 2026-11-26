@@ -58,6 +58,7 @@ import threading
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -65,7 +66,7 @@ from typing import Any, Iterable, Optional
 from . import held as held_files
 
 STATE_DIRNAME = "handback"
-VERSION = 1
+VERSION = 2  # of a record. 1: a cron job's recorded payload has the fields of _JOB_FIELDS_V1; 2: those of JOB_FIELDS
 
 # -- what is watched --------------------------------------------------------------------------------
 # config.yaml: every setting that differs from the baseline is a row, and a revert puts it back. A top-level key
@@ -115,10 +116,17 @@ _KEY_FIELDS = ("key_env", "api_key_env", "api_key", "key_cmd")
 # A saved answer or kept record names the state of a model entry in one of two forms: by the whole entry, or by
 # these fields of it alone (``_route_state``). Either form holds for the entry it names.
 _MODEL_ROUTE_FIELDS = ("provider", "base_url", "key_env", "api_key_env", "api_key")
-# A cron job's payload: what it runs, with what, when, and where its output goes. Run state is not payload.
-JOB_FIELDS = ("prompt", "script", "skills", "no_agent", "schedule", "workdir", "enabled_toolsets", "model",
-              "provider", "base_url", "monitor_script", "monitor_url", "interpreter", "context_from", "deliver",
-              "failure_deliver", "enabled")
+# A cron job's payload: what it runs, with what, when, how often, and where its output goes. ``repeat`` is the run
+# limit (``repeat.times``), ``next_run_at`` the next run. What the scheduler writes as it works is not payload:
+# the runs that happened, their results, and a next run it moved along the schedule (``_Diff._own_progress``).
+_JOB_FIELDS_V1 = ("prompt", "script", "skills", "no_agent", "schedule", "workdir", "enabled_toolsets", "model",
+                       "provider", "base_url", "monitor_script", "monitor_url", "interpreter", "context_from",
+                       "deliver", "failure_deliver", "enabled")
+JOB_FIELDS = (*_JOB_FIELDS_V1[:-1], "schedule_display", "name", "timezone", "grace_minutes", "catch_up",
+              "origin", "attach_to_session", "wrap_response", "reasoning_effort", "manual_run_prompt", "repeat",
+              "next_run_at", "enabled")
+_NEXT_RUN_SLACK = timedelta(minutes=5)  # how far past its interval a next run still reads as the scheduler's
+_TIME_TEXT_MAX = 64             # characters of a job's time that are read as one
 CONFIG, JOBS, ALLOWLIST = "config.yaml", "cron/jobs.json", "shell-hooks-allowlist.json"
 TIER1_TREES = {"scripts": "Script", "hooks": "Hook file", "plugins": "Plugin file", "desktop-plugins": "Plugin file",
                "bin": "Program file", "lsp/bin": "Program file", "node/bin": "Program file",
@@ -807,19 +815,86 @@ def _job_id(job: dict, index: int) -> str:
     return str(job.get("id") or f"#{index}")
 
 
-def _runnable(job: dict) -> bool:
-    return bool(job.get("enabled", True)) and not (str(job.get("state") or "") == "paused" or bool(job.get("paused_at")))
+def _runnable(job: dict, v1: bool = False) -> bool:
+    """Whether the scheduler runs the job: enabled, not paused, and not marked as having done all its runs (a
+    record of version 1 does not look at that mark: *v1*)."""
+    state = str(job.get("state") or "")
+    return (bool(job.get("enabled", True)) and not (state == "paused" or bool(job.get("paused_at")))
+            and (v1 or state != "completed"))
 
 
-def _payload(job: dict) -> dict:
-    out = {f: _plain(job[f]) for f in JOB_FIELDS if f not in ("skills", "enabled") and job.get(f)}
+def _times(job: dict) -> Any:
+    repeat = job.get("repeat")
+    return repeat.get("times") if isinstance(repeat, dict) else None
+
+
+def _completed(job: dict) -> Any:
+    repeat = job.get("repeat")
+    return (repeat.get("completed") if isinstance(repeat, dict) else None) or 0
+
+
+def _ran(old: dict, job: dict) -> bool:
+    """Whether the job ran since the record *old* was taken."""
+    return (old.get("last_run_at"), _completed(old)) != (job.get("last_run_at"), _completed(job))
+
+
+def _finished(old: dict, job: dict) -> bool:
+    """Whether the job ended by itself: it did the number of runs it was limited to at switch-on."""
+    times, done = _times(old), _completed(job)
+    return (job.get("state") == "completed" and type(times) is int and type(done) is int and 0 < times <= done)
+
+
+def _when(text: Any) -> Optional[datetime]:
+    """The instant an ISO time names (one without a zone is local time), or None when it is none."""
+    if not isinstance(text, str) or len(text) > _TIME_TEXT_MAX:
+        return None
+    try:
+        return datetime.fromisoformat(text).astimezone(timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _interval(job: dict) -> Optional[timedelta]:
+    schedule = job.get("schedule")
+    minutes = schedule.get("minutes") if isinstance(schedule, dict) and schedule.get("kind") == "interval" else None
+    try:
+        return timedelta(minutes=minutes) if type(minutes) in (int, float) and minutes > 0 else None
+    except OverflowError:
+        return None
+
+
+def _next_run_moved(old: dict, job: dict) -> bool:
+    """Whether the next run of a job is somewhere its recorded schedule does not put it. The scheduler itself
+    moves a next run: after a run, and past a run that was missed, to a time within one interval from now, and
+    it takes the next run of a job that ended away. Such a move is its own. A next run that cannot be read, or
+    one further away than an interval, is not; nor is one that is gone or earlier than recorded while the job did
+    not run. For a schedule that is no interval the distance cannot be told."""
+    before, after = old.get("next_run_at"), job.get("next_run_at")
+    if before == after:
+        return False
+    ran, was, is_now, step = _ran(old, job), _when(before), _when(after), _interval(old)
+    if after is None:
+        return not ran
+    if is_now is None or (not ran and was is not None and is_now < was):
+        return True
+    return step is not None and is_now > datetime.now(timezone.utc) + step + _NEXT_RUN_SLACK
+
+
+def _payload(job: dict, v1: bool = False) -> dict:
+    """What a job runs and when, as it is compared. *v1*: by the fields a record of version 1 holds."""
+    fields = _JOB_FIELDS_V1 if v1 else JOB_FIELDS
+    # A field of version 1 counts when it holds something; the others whenever they are set (0 and "no" say something).
+    out = {f: _plain(job[f]) for f in fields if f not in ("skills", "enabled", "repeat")
+           and (job.get(f) if f in _JOB_FIELDS_V1 else job.get(f) is not None)}
+    if not v1 and _times(job) is not None:
+        out["repeat"] = _plain(_times(job))
     skills = job.get("skills")
     # Hermes writes a list of names. Any other value is compared as it is, so the record differs and is a row.
     names = [job.get("skill")] if skills is None else list(skills) if isinstance(skills, (list, dict)) else [skills]
     names = list(dict.fromkeys(str(name) for name in names if name))
     if names:
         out["skills"] = names
-    out["enabled"] = _runnable(job)
+    out["enabled"] = _runnable(job, v1)
     return out
 
 
@@ -1357,34 +1432,78 @@ class _Diff:
         self._whole(CONFIG, "removed" if now["type"] == "absent" else "replaced by a link" if now["type"] != "file"
                     else "not valid YAML" if self.scan.config is None else "changed")
 
+    def _saved_jobs(self) -> Optional[dict]:
+        """``id -> record`` of the jobs file as it was copied at switch-on, or None when no copy is at hand."""
+        entry = self.pair(JOBS)[0]
+        data = _read_bytes(self.store / "base" / JOBS) if entry.get("copy") else b""
+        if not entry.get("copy") or hashlib.sha256(data).hexdigest() != entry.get("sha256"):
+            return None
+        parsed = _parse_jobs(data)
+        if parsed is None:
+            return None
+        saved: dict = {}
+        for index, job in enumerate(parsed[1]):
+            saved.setdefault(_job_id(job, index), job)
+        return saved
+
+    @staticmethod
+    def _own_progress(old: dict, job: dict) -> set:
+        """The payload fields whose difference is the scheduler's own doing since switch-on: a next run it moved
+        (the job ran, or a missed run was passed over), and a job that ended at the limit it had."""
+        quiet = set()
+        if not _next_run_moved(old, job):
+            quiet.add("next_run_at")
+        if _finished(old, job):
+            quiet.add("enabled")
+        return quiet
+
     def _cron(self) -> None:
         was, now = self.pair(JOBS)
+        recorded = self.base["cron"].get("jobs") or {}
         if now["type"] == "absent":
-            return  # no jobs file runs nothing
+            if was["type"] == "file" and recorded:
+                self._whole(JOBS, "removed")  # the jobs that ran from it are gone with it
+            return
         readable = now["type"] == "file" and self.scan.jobs is not None
         if not readable or self.base["cron"]["state"] not in ("ok", "absent"):
             if was["type"] == "absent" or not _same(was, now):
                 self._whole(JOBS, "changed" if readable else "not valid JSON" if now["type"] == "file"
                             else "replaced by a link")
             return
-        before = self.base["cron"].get("jobs") or {}
+        # The copy of the jobs file holds every field of a job. Without one (the file was too large to copy) the
+        # payloads of the record are compared, by the fields they hold.
+        saved = self._saved_jobs()
+        v1 = saved is None and int(self.base.get("version") or 1) < 2
+        fields = _JOB_FIELDS_V1 if v1 else JOB_FIELDS
+        present = set()
         for index, job in enumerate(self.scan.jobs):
             job_id = _job_id(job, index)
-            old = before.get(job_id)
+            present.add(job_id)
+            record = saved.get(job_id) if saved is not None else None
+            known = record is not None or job_id in recorded
             try:
-                payload = _payload(job)
-                if old == payload:
+                payload = _payload(job, v1)
+                old = _payload(record) if record is not None else recorded.get(job_id)
+                quiet = self._own_progress(record, job) if record is not None else {"next_run_at"}
+                differ = [f for f in fields if old is None or (old.get(f) != payload.get(f) and f not in quiet)]
+                if not differ:
                     continue
-                if old is None:
-                    detail = f"new, {_job_runs(payload)}"
-                else:
-                    fields = ", ".join(f for f in JOB_FIELDS if old.get(f) != payload.get(f))
-                    detail = f"changed ({fields}), {_job_runs(payload)}"
+                if not known or "next_run_at" not in differ:
+                    payload.pop("next_run_at", None)  # the scheduler moves it: no part of what was answered for
+                detail = (f"changed ({', '.join(differ)}), {_job_runs(payload)}" if known
+                          else f"new, {_job_runs(payload)}")
                 name, state = _short(job.get("name") or job_id, 60), payload
             except Exception:  # a value of this record cannot be walked: the record is a row all the same
                 name, state, detail = _short(job_id, 60), [job_id, now.get("sha256")], UNCOMPARED
-            self.rows.append(_row(f"cron:{job_id}", "cron_new" if old is None else "cron_changed", "Cron job", name,
-                                  detail, state=state, job=job_id, can_restore=old is None or bool(was.get("copy"))))
+            self.rows.append(_row(f"cron:{job_id}", "cron_changed" if known else "cron_new", "Cron job", name,
+                                  detail, state=state, job=job_id, can_restore=not known or bool(was.get("copy"))))
+        for job_id in (saved if saved is not None else recorded):
+            if job_id not in present:
+                record = saved[job_id] if saved is not None else {}
+                old = _payload(record) if saved is not None else recorded[job_id]
+                self.rows.append(_row(f"cron:{job_id}", "cron_removed", "Cron job",
+                                      _short(record.get("name") or job_id, 60), f"removed, {_job_runs(old)}",
+                                      state=["removed"], job=job_id, can_restore=saved is not None))
 
     def _files(self) -> None:
         cut = set(self.incomplete)
@@ -1758,6 +1877,42 @@ class _Revert:
         for row in rows:
             self._done(row, "restored", True, held=f"files/{CONFIG}")
 
+    @staticmethod
+    def _put_back(job: dict, old: dict) -> None:
+        """Set *job* back to its record *old* in everything that is payload, the label of its schedule and its
+        run limit included. What the scheduler wrote stays: the runs that happened (``repeat.completed``,
+        ``last_run_at``, the results), and a job that ended at the limit it had stays ended. The next run is the
+        recorded one when the job did not run since switch-on. When it ran and its timing is what comes back, the
+        next run is the restored interval counted from the last run; for a schedule that is no interval it is
+        taken out, and Hermes works it out at its next look."""
+        ran = _ran(old, job)
+        timing = (any(_plain(old.get(f)) != _plain(job.get(f)) for f in ("schedule", "timezone"))
+                  or _next_run_moved(old, job))
+        fields = [f for f in JOB_FIELDS if f not in ("enabled", "repeat", "next_run_at")]
+        fields += ["skill", "manual_run_at", "manual_run_restore_at"]
+        if _runnable(job) != _runnable(old) and not _finished(old, job):
+            fields += ["enabled", "state", "paused_at", "paused_reason"]
+        if not ran:
+            fields.append("next_run_at")
+        for field in fields:
+            if field in old:
+                job[field] = old[field]
+            else:
+                job.pop(field, None)
+        if isinstance(old.get("repeat"), dict):
+            mine = job.get("repeat") if isinstance(job.get("repeat"), dict) else {}
+            job["repeat"] = {**old["repeat"], **({"completed": mine["completed"]} if "completed" in mine else {})}
+        elif "repeat" in old:
+            job["repeat"] = old["repeat"]
+        else:
+            job.pop("repeat", None)
+        if ran and timing:
+            step, last = _interval(job), job.get("last_run_at")
+            try:
+                job["next_run_at"] = (datetime.fromisoformat(last) + step).isoformat()
+            except (TypeError, ValueError, OverflowError):  # no interval, or no readable last run
+                job.pop("next_run_at", None)
+
     def cron_jobs(self, rows: list[dict]) -> None:
         path = self.home.actual(JOBS)
         if not rows:
@@ -1775,21 +1930,25 @@ class _Revert:
                 kept.append(job)
             elif row["kind"] == "cron_new":
                 done.append((row, "removed", job))
+            elif row["kind"] == "cron_removed":
+                kept.append(job)
+                self._skip(row, "not changed", left=False)  # the job is there again
             elif old is None:
                 kept.append(job)
                 self._skip(row, "no copy to restore")
             else:
                 theirs = dict(job)
-                fields = [f for f in JOB_FIELDS if f != "enabled"] + ["skill"]
-                if _runnable(job) != _runnable(old):
-                    fields += ["enabled", "state", "paused_at", "paused_reason"]
-                for field in fields:  # the payload comes back; the run state stays as the sandbox left it
-                    if field in old:
-                        job[field] = old[field]
-                    else:
-                        job.pop(field, None)
+                self._put_back(job, old)
                 kept.append(job)
                 done.append((row, "restored", theirs))
+        there = {_job_id(job, index) for index, job in enumerate(jobs)}
+        for row in rows:  # a job that is gone comes back as it was recorded
+            if row["kind"] == "cron_removed" and row["_job"] not in there:
+                if row["_job"] in before:
+                    kept.append(before[row["_job"]])
+                    done.append((row, "restored", None))
+                else:
+                    self._skip(row, "no copy to restore", left=False)
         if isinstance(doc, dict):
             doc["jobs"] = kept
         self._go()
@@ -1826,7 +1985,7 @@ class _Revert:
         for row in of("config_file", "cron_file", "file_", "env_"):
             self._try(self.file, row)
         self._try(self.config_keys, of("config_added", "config_changed", "config_removed"))
-        self._try(self.cron_jobs, of("cron_new", "cron_changed"))
+        self._try(self.cron_jobs, of("cron_new", "cron_changed", "cron_removed"))
         for row in of("folder_"):
             self._try(self.folder, row)
         order = [row["id"] for row in rows]
@@ -1918,7 +2077,13 @@ def _state_now(where: _Home, item: dict, doc: Optional[dict], jobs: Optional[lis
         return item["state"] if item.get("state") == _route_state(path, value) else _digest(value)
     if kind.startswith("cron_") and kind != "cron_file":
         found = next((job for n, job in enumerate(jobs or []) if _job_id(job, n) == item.get("job")), None)
-        return _digest(_payload(found)) if found is not None else ""
+        if found is None:
+            return _digest(["removed"]) if kind == "cron_removed" else ""
+        payload = _payload(found)
+        # As a row names it: without the next run unless that was the change, or by the fields of version 1.
+        states = [_digest({k: v for k, v in payload.items() if k != "next_run_at"}), _digest(payload),
+                  _digest(_payload(found, v1=True))]
+        return item["state"] if item.get("state") in states else states[0]
     rel = item.get("rel")
     if not isinstance(rel, str) or not where.plain_parents(rel):
         return ""

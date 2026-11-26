@@ -10,6 +10,7 @@ import json
 import os
 import stat
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,11 @@ JOB = {"id": "aaaaaaaaaaaa", "name": "backup", "prompt": "", "skills": [], "skil
        "repeat": {"times": None, "completed": 3}, "enabled": True, "state": "scheduled", "paused_at": None,
        "next_run_at": "2030-01-01T00:00:00+00:00", "last_run_at": None, "deliver": "local",
        "enabled_toolsets": None, "workdir": None}
+
+
+def clock(**delta) -> str:
+    """An ISO time that far from this moment: what the scheduler writes of a run is read against the clock."""
+    return (datetime.now(timezone.utc) + timedelta(**delta)).isoformat()
 
 
 def jobs_bytes(*jobs) -> bytes:
@@ -133,7 +139,8 @@ def test_baseline_records_the_parsed_config_the_manifest_and_each_job(box):
     assert base["config"]["doc"]["mcp_servers"]["mine"]["args"] == ["tools/server.js"]
     job = base["cron"]["jobs"]["aaaaaaaaaaaa"]
     assert job["script"] == "backup.sh" and job["no_agent"] is True and job["schedule"]["minutes"] == 60
-    assert "next_run_at" not in job and "repeat" not in job  # run state is not payload
+    assert job["next_run_at"] == "2030-01-01T00:00:00+00:00"  # the next run is payload
+    assert "repeat" not in job  # it has no run limit, and the runs that happened are not payload
     manifest = base["manifest"]
     script = manifest["scripts/backup.sh"]
     data = (home / "scripts" / "backup.sh").read_bytes()
@@ -605,10 +612,10 @@ def test_a_paused_job_the_sandbox_enabled_is_a_row(box):
     assert now["enabled"] is False
 
 
-def test_run_state_and_removed_jobs_are_not_rows_and_survive_a_revert(box):
+def test_run_state_is_no_row_and_survives_a_revert_and_a_removed_job_is_a_row(box):
     home, state = taken(box)
-    ran = {**JOB, "repeat": {"times": None, "completed": 9}, "last_run_at": "2030-02-02T00:00:00+00:00",
-           "next_run_at": "2030-02-02T01:00:00+00:00", "last_status": "ok"}
+    ran = {**JOB, "repeat": {"times": None, "completed": 9}, "last_run_at": clock(minutes=-5),
+           "next_run_at": clock(minutes=55), "last_status": "ok"}
     set_jobs(home, ran)
     assert H.diff(home, state)["rows"] == []
     set_jobs(home, {**ran, "script": "other.sh"}, NEW_JOB)
@@ -616,9 +623,10 @@ def test_run_state_and_removed_jobs_are_not_rows_and_survive_a_revert(box):
     now = json.loads((home / "cron" / "jobs.json").read_bytes())["jobs"]
     assert now == [ran]  # the payload is the baseline's, the run state is what the sandbox left
     set_jobs(home)
-    assert H.diff(home, state)["rows"] == []  # a removed job runs nothing
+    assert [(row["id"], row["kind"]) for row in H.diff(home, state)["rows"]] == [("cron:aaaaaaaaaaaa", "cron_removed")]
     (home / "cron" / "jobs.json").unlink()
-    assert H.diff(home, state)["rows"] == []  # nor does a jobs file that is gone
+    rows = H.diff(home, state)["rows"]
+    assert [(row["id"], row["detail"]) for row in rows] == [("cronfile:cron/jobs.json", "removed")]
 
 
 def test_a_jobs_file_that_is_not_json_is_one_row_for_the_whole_file(box):

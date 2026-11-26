@@ -64,6 +64,13 @@ hermes -p sbtest sandbox handback
 A setting you changed yourself in the app while the sandbox was on is listed too, because the
 sandboxed backend wrote it. Keep it.
 
+A cron job is compared by what it runs and when: its prompt and script, its schedule, the next
+run, the run limit, its time zone and where its output goes.
+Revert puts those back. A job that was removed comes back, and so does a removed jobs file.
+
+Runs that happened while the sandbox was on stay counted. They are not a change, and neither is a
+next run that the scheduler moved along the schedule.
+
 The settings under these keys can differ without a row. They change how Hermes looks, its
 limits and its housekeeping:
 

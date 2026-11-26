@@ -244,7 +244,7 @@ def _the_backends_own_writes(home):
     put(home / "auth.lock", "")
     put(home / "memories" / "MEMORY.md", "likes tea\nasked for a hello today\n")
     put(home / "skills" / "notes" / "SKILL.md", "---\nname: notes\n---\nKeep notes.\n")
-    job = {**TH.JOB, "last_run_at": "2030-01-01T01:00:00+00:00", "next_run_at": "2030-01-01T02:00:00+00:00",
+    job = {**TH.JOB, "last_run_at": TH.clock(minutes=-5), "next_run_at": TH.clock(minutes=55),
            "repeat": {"times": None, "completed": 4}, "last_status": "ok"}
     put(home / "cron" / "jobs.json", TH.jobs_bytes(job))
     put(home / "cron" / "output" / "aaaaaaaaaaaa" / "2030-01-01.md", "backup\n")
