@@ -259,6 +259,7 @@ const T = {
   internetBody: 'The sandbox will be able to connect to any address on the internet.',
   internetOnly: 'Only allowed destinations are reachable.',
   internetNoRule: 'This sandbox has no rule for all internet access. Set it to Blocked.',
+  internetSetBlocked: 'This sandbox has no rule for all internet access. It was set to Blocked.',
   allow: 'Allow',
   destinations: 'Allowed destinations',
   addDestination: 'Add destination…',
@@ -2070,8 +2071,9 @@ function NetworkSection({ config, status, send, sendQuietly, pending, ask }) {
   // All of the internet is a choice only where the sandbox's driver has a rule for it (capabilities.egress_allow_all;
   // a driver that does not say has one). Elsewhere the row says Blocked with nothing to choose.
   const allInternet = config.capabilities?.egress_allow_all !== false
-  // A saved setting the driver cannot grant (a spec.yaml written by hand): the sandbox does not start with it, so
-  // the row says so and keeps the select as the way back to Blocked.
+  // A saved setting the driver cannot grant (a spec.yaml written by hand): the row says so and keeps the select as
+  // the way back to Blocked. The next start sets it to Blocked by itself, and that launcher's status
+  // (internet_set_blocked) makes the row say that it did.
   const ungranted = !allInternet && network.egress === 'allow'
 
   const setEgress = egress => {
@@ -2145,7 +2147,7 @@ function NetworkSection({ config, status, send, sendQuietly, pending, ask }) {
     h(Row, {
       key: 'egress',
       title: T.internet,
-      note: allInternet ? null : ungranted ? T.internetNoRule : T.internetOnly,
+      note: allInternet ? null : ungranted ? T.internetNoRule : status.internet_set_blocked ? T.internetSetBlocked : T.internetOnly,
       meta: applied && applied.egress !== network.egress ? h(PendingBadge) : null,
       access:
         allInternet || ungranted

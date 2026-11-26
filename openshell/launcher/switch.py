@@ -166,6 +166,10 @@ START_LIMIT = READY_TIMEOUT + UNCOLLECTED_AFTER + 60.0
 # record inside the request that answers the page.
 FORGET_TRIES, FORGET_PAUSE = 4, 0.05
 NOT_FINISHED = "The sandbox didn't finish starting. Turn it on again."
+# What a start says once when it set a saved "all internet access" to blocked (``block_all_internet``), and the
+# word it leaves beside the launcher's state for the launcher that starts next (``take_internet_note``).
+ALL_INTERNET_SET_BLOCKED = "This sandbox has no rule for all internet access. It was set to Blocked."
+INTERNET_NOTE = "internet-set-blocked"
 SWITCH_ROUTE = "/api/plugins/openshell/switch"
 
 
@@ -530,6 +534,7 @@ def _start(layout, *, handback_answer: Optional[str] = None, handback_seen: Opti
         spec["port"] = spec.get("port") or free_loopback_port()
         network_policy(spec)
         driver = make_driver(spec)
+        blocked = block_all_internet(spec, driver)
         driver.preflight()
     except (DriverUnavailable, LayoutError) as exc:
         raise SwitchError(str(exc), 422) from None
@@ -537,6 +542,9 @@ def _start(layout, *, handback_answer: Optional[str] = None, handback_seen: Opti
     # Before anything is saved, pinned or recorded: what the last sandbox session left without an answer.
     handed_back = previous_session(layout, handback_answer, seen=handback_seen)
     save_spec(layout, spec)  # only once the driver passed preflight
+    if blocked:
+        note_internet_blocked(layout)
+        note = " ".join(filter(None, [note, ALL_INTERNET_SET_BLOCKED]))
     try:
         # Now, on the host, before anything starts: the one moment the home is the user's alone. A restart
         # (``serve --service``) never pins.
@@ -633,6 +641,41 @@ def _hand_back_undone(layout) -> None:
     sandbox wrote in place instead, drop the revert here and only close."""
     if not handback.revert(layout.home, layout.state_dir, "all")["left"]:
         handback.close(layout.state_dir)
+
+
+def block_all_internet(spec: dict, driver) -> bool:
+    """A saved setting that allows all internet access, with a driver that has no rule for it: *spec* is set to
+    blocked, and the caller saves it. The sandbox then starts with the destinations that are listed, instead of
+    being refused at the driver's start, when the profile's keys are already registered. Blocked is the one
+    setting such a driver runs, and it opens nothing the saved setting did not. Returns whether *spec* was
+    changed."""
+    network = spec.get("network") or {}
+    if str(network.get("egress") or "deny").lower() != "allow":
+        return False
+    if driver.capabilities().get("egress_allow_all", True):
+        return False
+    spec["network"] = {**network, "egress": "deny"}
+    return True
+
+
+def note_internet_blocked(layout) -> None:
+    """Leave word for the launcher that starts next that the setting was set to blocked: its status says so, and
+    the page's Internet access row with it. Never holds the start."""
+    try:
+        layout.state_dir.mkdir(parents=True, exist_ok=True)
+        (layout.state_dir / INTERNET_NOTE).write_text("", encoding="utf-8")
+    except OSError as exc:
+        log.warning("the changed internet setting of profile %s could not be noted: %s", layout.name, _why(exc))
+
+
+def take_internet_note(layout) -> bool:
+    """Whether the start that leads to this launcher set the internet setting to blocked. The word is taken: the
+    launcher after this one finds none, so it is said once."""
+    try:
+        (layout.state_dir / INTERNET_NOTE).unlink()
+    except OSError:
+        return False
+    return True
 
 
 # -- a switch-on asked for in short requests (the page's route) ------------------------------------

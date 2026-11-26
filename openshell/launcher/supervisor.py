@@ -63,6 +63,9 @@ class Supervisor:
         self.temporary: dict = {"folders": [], "approved": {}}
         self._saved_network: Optional[dict] = None
         self.switching_off = False  # the switch is turning off: the launcher stops and exits for good
+        # The start that led to this launcher set a saved "all internet access" to blocked (switch.py
+        # ``block_all_internet``): the status says so, for the page's Internet access row.
+        self.internet_set_blocked = False
         # Set by the launcher when it ends a sandbox nobody owns (launcher_cli ``_end_when_cut_off``): a start
         # under way gives up at its next look, so ``stop`` gets its turn without waiting for the backend.
         self.abandon_start = False
@@ -898,7 +901,9 @@ class Supervisor:
         ``handback.open``: a baseline of the home was recorded at switch-on, so the switch-off can list what
         changed (the list itself is ``GET handback``: this status is polled). ``handback.stamp`` changes when
         that list may have (a few ``stat`` calls; the page reads the list again when it differs) and
-        ``handback.kept`` counts what the user kept from a sandbox and is still in the profile."""
+        ``handback.kept`` counts what the user kept from a sandbox and is still in the profile.
+        ``internet_set_blocked``: this launcher's start found "all internet access" saved for a driver without
+        that rule and set it to blocked; the page's Internet access row says so."""
         return {
             "profile": self.layout.name, "sandboxed": True, "state": self.reported_state(), "driver": self.driver.name,
             "capabilities": self.driver.capabilities(),
@@ -911,7 +916,7 @@ class Supervisor:
             "endpoint_changed": self.endpoint_changed(), "pinned": self._pinned,
             "handback": handback.status_view(self.layout.home, self.layout.state_dir),
             "restarting": self.restarting_view(), "restart": self.restart_view(),
-            "switching_off": self.switching_off,
+            "switching_off": self.switching_off, "internet_set_blocked": self.internet_set_blocked,
             "providers": self.provider_rows(),
         }
 

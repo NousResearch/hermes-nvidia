@@ -60,7 +60,8 @@ elsewhere.
 | `handback` | What a review did, when one ran |
 
 On stderr, `on` also says what it moved (`Moved to .env: ...`), what a review kept or reverted,
-and one line when the profile's model has no key.
+and one line when the profile's model has no key or a saved `allow` for internet access was set
+to `deny`.
 
 With exit status 3, `on` prints the list "Changed in the sandbox" first.
 See [Review changes at switch-off](switching-off.md#a-session-that-ended-without-a-review).
@@ -187,7 +188,7 @@ Point a client at `http://127.0.0.1:N` with the token stored in the file `serve`
 | `--busybox PATH` | busybox-w32 for the sandbox's shell |
 | `--openshell-gateway NAME` | A registered OpenShell gateway (mTLS) to run the sandbox on. Without it, `serve` uses the plugin's private gateway. |
 | `--openshell-image REF` | Hermes image for the OpenShell sandbox |
-| `--egress deny\|allow` | Internet access from the sandbox. `allow` is refused and nothing is saved: OpenShell has no rule for all internet access. |
+| `--egress deny\|allow` | Internet access from the sandbox. `allow` is refused and nothing is saved: OpenShell has no rule for all internet access. A saved `allow` starts as `deny`: `serve` and `on` save `deny` and say so. |
 | `--rotate-token` | Mint a new outer token |
 | `--service` | Run as the profile's login service. It exits at once if the switch is off. It runs a sandbox only for a profile that is marked or is being switched on. |
 | `--revert`, `--keep` | Answer the review of the last sandbox session |

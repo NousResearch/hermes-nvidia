@@ -165,6 +165,7 @@ def _cmd_serve(args) -> int:
     from .launcher.layout import LayoutError, current_profile
     from .launcher.spec import (NO_ALL_INTERNET, ensure_token, free_loopback_port, load_spec, network_policy,
                                 parse_folder_arg, save_spec)
+    from .launcher.switch import ALL_INTERNET_SET_BLOCKED, block_all_internet, note_internet_blocked
 
     try:
         layout = current_profile()
@@ -212,8 +213,13 @@ def _cmd_serve(args) -> int:
         driver = make_driver(spec)
         if args.egress == "allow" and not driver.capabilities().get("egress_allow_all", True):
             raise LayoutError(NO_ALL_INTERNET)  # as the settings routes refuse it: nothing is saved
+        # The same setting, found saved: the sandbox starts as blocked, and this start says so.
+        blocked = block_all_internet(spec, driver)
         driver.preflight()
         save_spec(layout, spec)  # only once the driver passed preflight: a refused path is never saved
+        if blocked:
+            note_internet_blocked(layout)
+            print(f"hermes sandbox: {ALL_INTERNET_SET_BLOCKED}", file=sys.stderr, flush=True)
         token = ensure_token(layout, rotate=args.rotate_token)
     except (LayoutError, DriverUnavailable) as exc:
         return _fail(str(exc))
@@ -427,9 +433,11 @@ async def _serve(layout, spec, driver, token: str, service: bool = False, own_pi
     from .launcher.layout import current_runtime
     from .launcher.proxy import MAX_HEAD, Proxy
     from .launcher.supervisor import Supervisor
+    from .launcher.switch import take_internet_note
 
     port = int(spec["port"])
     sup = Supervisor(layout, current_runtime(), spec, driver, outer_port=port)
+    sup.internet_set_blocked = take_internet_note(layout)
     stop = asyncio.Event()
     # The chat socket always goes through the frame relay (strips access wording from sandbox-sent
     # approvals); in-chat cards for blocked requests and folder refusals ride on it (cards.py).
@@ -704,7 +712,7 @@ def _cmd_on(args) -> int:
                       "token_file": str(layout.token_path), "state": result["status"].get("state"),
                       **({"handback": result["handback"]} if result.get("handback") else {})}, indent=2))
     _say_handed_back(layout, result.get("handback") or {}, answer)
-    if result.get("note"):  # the sandbox is on; this is what its first message would run into
+    if result.get("note"):  # the sandbox is on; what to know about it (a model without a key, a changed setting)
         print(f"hermes sandbox: {result['note']}", file=sys.stderr)
     return 0
 

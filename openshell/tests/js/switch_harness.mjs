@@ -1646,12 +1646,12 @@ try {
 // -- internet access: all of the internet is a choice only where the sandbox's driver has a rule for it --------
 out.internet = {}
 try {
-  const internetRow = (capabilities, egress = 'deny') => {
+  const internetRow = (capabilities, egress = 'deny', status = {}) => {
     const sent = []
     const asked = []
     const push = (...args) => sent.push(args)
     const config = { network: { egress, allow: [pypi] }, endpoints: [], ...(capabilities === undefined ? {} : { capabilities }) }
-    const tree = P.NetworkSection({ config, status: {}, send: push, sendQuietly: push, pending: false, ask: dialog => asked.push(dialog) })
+    const tree = P.NetworkSection({ config, status, send: push, sendQuietly: push, pending: false, ask: dialog => asked.push(dialog) })
     const row = deep(tree, 'Row').find(found => found.props.title === 'Internet access')
     const select = deep(row.props.access, 'Select')[0]
     const items = deep(row.props.access, 'SelectItem')
@@ -1674,6 +1674,7 @@ try {
     doesNotSay: internetRow({}),
     olderLauncher: internetRow(undefined),
     noRuleSavedAllowed: internetRow({ egress_allow_all: false }, 'allow'),
+    noRuleSetBlocked: internetRow({ egress_allow_all: false }, 'deny', { internet_set_blocked: true }),
     hasRuleSavedAllowed: internetRow({ egress_allow_all: true }, 'allow')
   }
 } catch (error) {
