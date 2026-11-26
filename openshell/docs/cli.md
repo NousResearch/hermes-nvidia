@@ -66,7 +66,15 @@ See [Review changes at switch-off](switching-off.md#a-session-that-ended-without
 
 ## off
 
-Turns the sandbox off: stops the launcher, removes its login service and unmarks the profile.
+Turns the sandbox off: stops the launcher and its sandbox, removes its login service and unmarks
+the profile.
+
+When no launcher answers, `off` stops the login service and asks the gateway to delete the
+profile's sandbox. It unmarks the profile only after that sandbox is gone from the gateway.
+
+Until then `off` exits with status 1 and prints "The sandbox couldn't be stopped (...). It stays
+switched on."
+See [The sandbox couldn't be stopped](troubleshooting.md#the-sandbox-couldnt-be-stopped).
 
 | Flag | Meaning |
 |---|---|

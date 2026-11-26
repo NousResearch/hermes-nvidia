@@ -58,7 +58,7 @@ from . import held, usage_data
 from . import categories
 from .credential_sink import PLACEMENTS, PROTOCOLS, CredentialDecl, Endpoint
 from .driver import DriverUnavailable, LaunchRequest, NotSupported, ProposalChanged, SandboxDriver
-from .gateway_watch import GatewayWatch
+from .gateway_watch import GatewayWatch, registered as gateway_registered
 
 log = logging.getLogger("openshell.driver")
 
@@ -2146,12 +2146,33 @@ class OpenShellDriver(CredentialSinkMixin, SandboxDriver):
         return out
 
     def drop_leftover(self, profile: str) -> bool:
+        """Also the switch-off without a launcher: returns once the sandbox is gone from the gateway, and
+        raises when it cannot be deleted or the gateway cannot say."""
         name = sandbox_name(profile)
-        if self.api.sandbox_state(name) is None:
+        try:
+            found = self.api.sandbox_state(name)
+        except Exception:
+            if not self._gone_without_gateway(name):
+                raise
+            return False
+        if found is None:
             return False
         self._note(f"deleting leftover sandbox {name} before the profile's folder is reviewed")
         self.api.delete_sandbox(name, timeout=120)
         return True
+
+    def _gone_without_gateway(self, name: str) -> bool:
+        """After a question the gateway did not answer: whether sandbox *name* is known to be gone all the same.
+        A gateway that has no registration with the CLI has no sandbox. A registration that is there and cannot
+        be read says nothing, and a gateway that listens and does not answer is busy: nothing is known. When
+        nothing listens at its address, the sandbox's containers outlive it: they are ended here, and the
+        answer is whether none is left."""
+        known = gateway_registered(self.cfg)
+        if known is False:
+            return True
+        if known is None or self._gateway.down() is None:
+            return False
+        return self._remove_containers(name)
 
     def start(self, request: LaunchRequest) -> None:
         if self._name is not None and self.exit_code() is None:
@@ -2402,14 +2423,16 @@ class OpenShellDriver(CredentialSinkMixin, SandboxDriver):
         self._note(f"the gateway is not listening: it was not asked to delete sandbox {self._name}")
         return True
 
-    def _remove_containers(self) -> bool:
-        """Without the gateway: end this sandbox's containers through the container program, the ones the
-        gateway labelled with the sandbox's name and its own (no other gateway's, no other sandbox's). True
-        when none is left; False when there is no container program or it cannot say."""
+    def _remove_containers(self, name: Optional[str] = None) -> bool:
+        """Without the gateway: end the containers of sandbox *name* (this driver's own without one) through
+        the container program, the ones the gateway labelled with the sandbox's name and its own (no other
+        gateway's, no other sandbox's). True when none is left; False when there is no container program or it
+        cannot say."""
+        name = name or self._name
         cli = self.cfg.container_cli
         if not cli:
             return False
-        listing = [cli, "ps", "-a", "-q", "--no-trunc", "--filter", f"label=openshell.ai/sandbox-name={self._name}",
+        listing = [cli, "ps", "-a", "-q", "--no-trunc", "--filter", f"label=openshell.ai/sandbox-name={name}",
                    "--filter", f"label=openshell.ai/sandbox-namespace={self.cfg.gateway}"]
         try:
             for attempt in (1, 2):
@@ -2420,11 +2443,11 @@ class OpenShellDriver(CredentialSinkMixin, SandboxDriver):
                 if not ids:
                     return True
                 if attempt == 1:
-                    self._note(f"removing {len(ids)} container(s) of sandbox {self._name} left without their gateway")
+                    self._note(f"removing {len(ids)} container(s) of sandbox {name} left without their gateway")
                     self._run([cli, "rm", "-f", *ids], capture_output=True, text=True, timeout=60,
                               stdin=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError) as exc:
-            self._note(f"the containers of sandbox {self._name} could not be removed: {exc}")
+            self._note(f"the containers of sandbox {name} could not be removed: {exc}")
         return False
 
     def _take_out(self, path: Path) -> Path:

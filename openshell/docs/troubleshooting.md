@@ -98,6 +98,21 @@ The Sandbox page says "The sandbox isn't answering." and cannot turn such a sand
 1. Run `hermes -p <profile> sandbox off` in a terminal.
 2. Press **Switch back** on the page.
 
+## The sandbox couldn't be stopped
+
+`hermes -p <profile> sandbox off` says "The sandbox couldn't be stopped (...). It stays switched
+on." when the gateway did not delete the profile's sandbox, or did not answer.
+The page says the same after "Couldn't finish turning off:".
+
+The profile stays switched on, and Hermes does not run it on this computer: the sandbox can still
+write the profile folder. Nothing was reverted.
+
+1. Run `hermes -p <profile> sandbox off` again.
+2. On Linux, when the gateway is not running, start Docker or Podman first.
+   The command then removes that sandbox's containers itself.
+3. On Windows, when the sandbox runs on a gateway named with `--openshell-gateway`, start that
+   gateway first. The plugin cannot tell whether a gateway it does not run has ended.
+
 ## The sandbox's gateway stopped
 
 If the OpenShell gateway's process ends while the sandbox is on, the plugin starts the gateway and

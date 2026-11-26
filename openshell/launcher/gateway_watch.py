@@ -42,6 +42,20 @@ def address(cfg) -> Optional[tuple]:
         return None
 
 
+def registered(cfg) -> Optional[bool]:
+    """Whether the gateway *cfg* names is registered with the CLI. False: it has no registration file. True:
+    the file gives the gateway's address. None: the file is there and cannot be read, or gives no address, so
+    nothing is known of the gateway."""
+    try:
+        with open(cfg.gateway_dir / "metadata.json", "rb"):
+            pass
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return None
+    return True if address(cfg) is not None else None
+
+
 def listens(host: str, port: int, timeout: float = 0.5) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):

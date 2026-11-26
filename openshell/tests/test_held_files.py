@@ -469,17 +469,25 @@ def test_a_terminal_switch_off_without_its_launcher_leaves_the_files_where_a_run
     layout = LD._layout(tmp_path)
     held.hold(layout.home, _names(layout, tmp_path), _take_out(layout))
 
-    def cannot(layout_, driver):
-        raise SW.SwitchError("could not be stopped", 502)
+    class Driver:
+        fails = True
 
-    monkeypatch.setattr(SW, "drop_leftover", cannot)
-    assert SW._leftover_gone(layout) is False
-    monkeypatch.setattr(SW, "drop_leftover", lambda layout_, driver: True)
-    monkeypatch.setattr("openshell.launcher_cli.make_driver", lambda spec: object())
+        def drop_leftover(self, profile):
+            if self.fails:
+                raise RuntimeError("could not be stopped")
+            return True
+
+    driver = Driver()
+    monkeypatch.setattr("openshell.launcher_cli.make_driver", lambda spec: driver)
+    with pytest.raises(SW.SwitchError):  # the switch-off stops here, before anything is handed back
+        SW._leftover_gone(layout)
+    assert held.is_link(layout.home / ".env") and held.active(layout.home)
+    driver.fails = False
     assert SW._leftover_gone(layout) is True
     held.release(layout.home, _take_out(layout))
-    monkeypatch.setattr(SW, "drop_leftover", cannot)
-    assert SW._leftover_gone(layout) is True  # nothing held: nothing to ask
+    driver.fails = True
+    with pytest.raises(SW.SwitchError):  # the gateway is asked whether or not a file is held
+        SW._leftover_gone(layout)
 
 
 @posix
@@ -506,12 +514,8 @@ def test_the_switch_off_route_asks_the_driver_whether_its_sandbox_is_gone(tmp_pa
     routes = TP._off_route(layout, monkeypatch, [])
     routes._sup.driver = SimpleNamespace(sandbox_gone=lambda: False)  # its delete failed
     status, payload, _ = TP._send(routes, "POST", "/api/plugins/openshell/switch/off", {})
-    assert status == 200 and payload["state"] == "off"
+    assert status == 409 and payload["code"] == "sandbox_not_stopped"  # not turned off, nothing handed back
     assert held.is_link(layout.home / ".env"), "put back under a sandbox that may still run"
-    held.release(layout.home, _take_out(layout))
-    P.take(layout)
-    held.hold(layout.home, _names(layout, tmp_path), _take_out(layout))
-    routes = TP._off_route(layout, monkeypatch, [])
     routes._sup.driver = SimpleNamespace(sandbox_gone=lambda: True)
     assert TP._send(routes, "POST", "/api/plugins/openshell/switch/off", {})[0] == 200
     assert _top(layout.home)[".env"] == "file"

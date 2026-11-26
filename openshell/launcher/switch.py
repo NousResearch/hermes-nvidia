@@ -61,6 +61,13 @@ A desktop without ``beforeApply`` ignores it and clears the override straight af
 page then spends the ticket afterwards (the profile shows as unavailable until the launcher has
 cleared the marker).
 
+Either way the marker is cleared only once the sandbox is known to be gone. The launcher's ``switch/off``
+answers 409 ``sandbox_not_stopped`` when its driver could not delete the sandbox, and ``turn_off_here``,
+with no launcher to hand the work to, asks the gateway itself to delete this profile's sandbox and raises
+while the gateway still has it (``_leftover_gone``). The profile then stays marked. The terminal hands the
+work to a launcher only when the launcher's state file names a process that is alive, and sends the launcher's
+token nowhere else.
+
 The hand-back (``handback.py``). Once the sandbox is off, Hermes on this computer reads the profile's
 home as its own, and the sandbox wrote most of it. So before the marker is cleared, in the launcher's
 ``switch/off`` and in ``turn_off_here`` alike, the home is compared with the baseline taken at
@@ -804,9 +811,13 @@ def unregister(layout, runtime=None, manager: Callable = manager_for) -> LoginSe
 def turn_off_here(layout, *, handback_answer: Optional[str] = None, runtime=None, manager: Callable = manager_for,
                   sleep: Callable[[float], None] = time.sleep) -> dict:
     """``hermes sandbox off`` from a host terminal: hand the work to a running launcher (it tears down in
-    order), else stop and remove the service and clear the marker here. *handback_answer* is ``"revert"``,
-    ``"keep"`` or None; with changes that need an answer and none given, ``HandbackNeeded`` is raised and
-    nothing was changed."""
+    order). The launcher is the one whose state file names a process that is alive: its token is sent to that
+    launcher's port and to no other. With no such launcher the same order is kept here: the service is stopped,
+    the gateway is asked to delete this profile's sandbox, and only once that sandbox is gone from it is the
+    service removed, the home handed back and the marker cleared. A sandbox that cannot be confirmed gone
+    raises ``SwitchError``: the profile is still marked, and its home is as it was. *handback_answer* is
+    ``"revert"``, ``"keep"`` or None; with changes that need an answer and none given, ``HandbackNeeded`` is
+    raised and nothing was changed."""
     state = running_launcher(layout)
     if state is not None:
         try:
@@ -827,6 +838,8 @@ def turn_off_here(layout, *, handback_answer: Optional[str] = None, runtime=None
                                  else {"open": True, "rows": [], "unanswered": detail.get("unanswered", 0)})
         if code == 409 and detail.get("code") == "handback_incomplete" and detail.get("detail"):
             raise SwitchError(str(detail["detail"]), 409)  # the launcher's own words: what to close, then again
+        if code == 409 and detail.get("code") == "sandbox_not_stopped":
+            raise SwitchError(not_stopped(layout), 502)  # the launcher still runs: the same command asks it again
         if code != 0:
             raise SwitchError(f"The launcher refused: {code} {payload}", 502)
     view = review(layout)
@@ -837,11 +850,21 @@ def turn_off_here(layout, *, handback_answer: Optional[str] = None, runtime=None
 
         runtime = current_runtime()
     service = manager(define(layout, runtime))
-    remove_definition(layout)
+    # The service stops first: a launcher that still runs cannot start the sandbox again. Its definition stays
+    # until the sandbox is gone, so a profile whose sandbox is not known to be gone reads as switched on.
     service.stop()
+    _leftover_gone(layout)  # raises while the gateway still has the sandbox: the marker and the home stay
+    remove_definition(layout)
+    # A service manager can start the launcher again after a stop. One that started while the definition was
+    # still there found the profile switched on and started its sandbox again. A launcher that starts from here
+    # on finds no definition and starts nothing. So the service is stopped once more when it runs, and the
+    # gateway is asked once more, before the home is handed back.
+    if service.state() == "running":
+        service.stop()
+    _leftover_gone(layout)
     service.uninstall()
     # Before the marker goes: the host never reads an env file the sandbox left, nor runs what it changed.
-    done = hand_back(layout, view, handback_answer, record_keep=True, sandbox_gone=_leftover_gone(layout))
+    done = hand_back(layout, view, handback_answer, record_keep=True)
     if done["blocked"]:
         raise SwitchError(done["blocked"], 409)  # the marker stays
     cleared = clear_marker(layout)
@@ -850,26 +873,33 @@ def turn_off_here(layout, *, handback_answer: Optional[str] = None, runtime=None
     return {"stopped": "service", "marker_cleared": cleared, "state": "off", "handback": done["result"]}
 
 
-def _leftover_gone(layout) -> bool:
-    """A switch-off without its launcher (it was killed): whether no sandbox of this profile runs any more. Only
-    asked where a driver keeps the profile's credential files out of its sandbox's reach by where they are
-    (``held.py``): they must not go back under their names while that sandbox still runs. A sandbox the last
-    launcher left is stopped here; when that cannot be done or checked the answer is False and the files stay
-    where they are. Never raises."""
-    from . import held
+def not_stopped(layout=None, why: str = "") -> str:
+    """What a switch-off says when the gateway still has the profile's sandbox, or cannot say: the profile stays
+    marked and switched on. With *layout*, the terminal's sentence: it names the command that tries again."""
+    said = f"The sandbox couldn't be stopped{f' ({why})' if why else ''}. It stays switched on."
+    if layout is None:
+        return said
+    profile = "" if layout.name == "default" else f" -p {layout.name}"
+    return f"{said} Run `hermes{profile} sandbox off` again."
 
-    if not held.active(layout.home):
-        return True
+
+def _leftover_gone(layout) -> bool:
+    """A switch-off without its launcher: end the sandbox this profile still has on its gateway. Returns once the
+    sandbox is gone from it (True when there was one to delete); a gateway the driver knows to have ended has
+    none. The driver asks for the sandbox by this profile's own name, so another profile's sandbox on the same
+    gateway is never touched. Raises ``SwitchError`` when the sandbox cannot be deleted or the driver cannot
+    tell. The caller then leaves the profile marked: the host never runs a profile while its sandbox can still
+    write its home."""
     try:
         from ..launcher_cli import make_driver
         from .spec import load_spec
 
-        drop_leftover(layout, make_driver(load_spec(layout)))
-        return True
+        drop = getattr(make_driver(load_spec(layout)), "drop_leftover", None)
+        return bool(drop(layout.name)) if drop is not None else False
     except Exception as exc:
-        log.warning("a sandbox of profile %s may still run (%s): its credential files stay in %s", layout.name,
-                    _why(exc), held.folder(layout.home))
-        return False
+        why = " ".join(_why(exc).split())[:300]
+        log.warning("the sandbox of profile %s could not be stopped: %s", layout.name, why)
+        raise SwitchError(not_stopped(layout, why), 502) from None
 
 
 def _launcher_off(port: int, token: str, answer: Optional[str]):

@@ -50,8 +50,13 @@ The order makes a half-finished switch fail closed.
 6. The desktop routes the profile back to the host.
 
 The sandbox is gone before the marker is, so the host never runs the profile while a sandbox
-might. A failure before the marker is cleared leaves the profile marked.
+might. A failure before the marker is cleared leaves the profile marked. A sandbox the gateway
+did not delete is such a failure.
 `hermes -p <profile> sandbox off` finishes the job from a terminal.
+
+When no launcher answers, that command stops the login service and asks the gateway to delete
+the profile's sandbox. It clears the marker only after that sandbox is gone from the gateway.
+Another profile's sandbox on the same gateway keeps running.
 
 ## The launcher's proxy
 

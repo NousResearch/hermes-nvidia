@@ -43,8 +43,8 @@ from .layout import LayoutError
 from .proxy import HostHandler, Request
 from .settings_view import MOVE_WHILE_ON, config_payload, key_rows, status_providers
 from .spec import allow_entry, folder_from_entry, folders_from_body, network_from_body, network_policy, update_spec
-from .switch import (Tickets, clear_marker, hand_back, host_serve, needs_an_answer, needs_answer, review,
-                     switch_view, unregister)
+from .switch import (Tickets, clear_marker, hand_back, host_serve, needs_an_answer, needs_answer, not_stopped,
+                     review, switch_view, unregister)
 
 log = logging.getLogger("openshell.host_routes")
 
@@ -167,7 +167,8 @@ class HostRoutes:
     async def _switch_off(self, req: Request, body: bytes):
         """Stop the sandbox, hand the home back, remove the login service, clear core's marker (last), then
         exit. Takes the outer token or a ticket; the sandbox has neither. Any failure keeps the marker: fail
-        closed. ``{"handback": "revert" | "keep"}`` is the user's answer to the list of what the sandbox changed
+        closed. A sandbox the gateway did not delete is such a failure (409 ``sandbox_not_stopped``).
+        ``{"handback": "revert" | "keep"}`` is the user's answer to the list of what the sandbox changed
         (order and reasons in switch.py); without one, changes that need an answer stop nothing (409)."""
         data, error = _json_body(body)
         if error:
@@ -195,11 +196,15 @@ class HostRoutes:
             # The sandbox is gone and the profile still marked: an env file it created or replaced is put back
             # (the pin) and what it changed among the files that run here is reverted or kept as answered,
             # before any host process may read the home again.
+            # A driver whose sandbox could not be removed says so. That sandbox can still write the home, so
+            # nothing is handed back, the service stays registered and the profile stays marked. Asking again
+            # stops again, and the driver's stop asks the gateway to delete the sandbox once more.
+            gone = getattr(getattr(sup, "driver", None), "sandbox_gone", None)
+            if callable(gone) and not gone():
+                sup.switching_off = False
+                return 409, {"detail": not_stopped(), "code": "sandbox_not_stopped"}, {}
             async with self._handback_lock:
-                # A driver whose sandbox could not be removed says so: its credential files stay out of reach.
-                gone = getattr(getattr(sup, "driver", None), "sandbox_gone", None)
-                done = await asyncio.to_thread(hand_back, sup.layout, view, answer,
-                                               sandbox_gone=bool(gone()) if callable(gone) else True)
+                done = await asyncio.to_thread(hand_back, sup.layout, view, answer)
             if done["blocked"]:
                 # Fail closed, as a failed unregister does: stopped, still registered, still marked. Trying
                 # again is safe, and "keep" always goes through.

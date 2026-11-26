@@ -54,7 +54,7 @@ from . import usage_data, windows_programs
 from ..loopback_env import DIRECT, LOOPBACK_ENV
 from .driver import DriverUnavailable, LaunchRequest, NotSupported, ProposalChanged, SandboxDriver
 from .gateway_service import TELEMETRY_OFF, gateway_log
-from .gateway_watch import GatewayWatch
+from .gateway_watch import GatewayWatch, registered as gateway_registered
 from .layout import legacy_secret_cache_paths
 from .openshell_driver import (HOST_GATEWAY, CredentialSinkMixin, OpenShellConfig, config_from_spec, ensure_managed,
                                gateway_endpoint, model_rules, network_from_policy, network_rules, parse_event,
@@ -810,6 +810,7 @@ class OpenShellWindowsDriver(CredentialSinkMixin, SandboxDriver):
         self._checked = 0.0
         self._ready_at = 0.0
         self._starting = False
+        self._gone = True  # False after a stop whose delete failed: the sandbox is not known to be gone
         self._gateway = GatewayWatch(cfg)  # whether the gateway is still there (gateway_watch.py)
 
     @classmethod
@@ -923,12 +924,41 @@ class OpenShellWindowsDriver(CredentialSinkMixin, SandboxDriver):
         return out
 
     def drop_leftover(self, profile: str) -> bool:
+        """Also the switch-off without a launcher: returns once the sandbox is gone from the gateway, and
+        raises when it cannot be deleted or the gateway cannot say. A gateway that has no registration with the
+        CLI is not asked (the CLI finds its gateway through the registration): it has no sandbox. A
+        registration that is there and cannot be read says nothing of the gateway: that raises."""
         name = sandbox_name(profile)
-        if self.gw.sandbox(name) is None:
+        if not self._registered():
+            return False
+        try:
+            found = self.gw.sandbox(name)
+        except (CliError, OSError, subprocess.SubprocessError):
+            if not self._ended_with_gateway():
+                raise
+            self._note(f"the gateway is not listening: sandbox {name} ended with it")
+            return False
+        if found is None:
             return False
         self._note(f"deleting leftover sandbox {name} before the profile's folder is reviewed")
         self.gw.delete(name)
         return True
+
+    def _registered(self) -> bool:
+        """Whether the gateway has a registration with the CLI. Raises when a registration file is there and
+        cannot be read: nothing is known of the gateway then."""
+        known = gateway_registered(self.cfg)
+        if known is None:
+            raise DriverUnavailable(f"the registration of gateway {self.cfg.gateway} cannot be read")
+        return known
+
+    def _ended_with_gateway(self) -> bool:
+        """After a question the gateway did not answer: True when nothing listens at its address and its own
+        login service is not running. The gateway's process has ended then, and OpenShell ends every sandbox
+        process with it (the gateway holds each in a job). Nothing is known of the sandboxes of a gateway that
+        listens and does not answer, of one whose service runs or cannot be asked, and of one the profile's spec
+        names (it has no service of the plugin's to ask)."""
+        return self._gateway.down() == "stopped"
 
     def start(self, request: LaunchRequest) -> None:
         if self._name is not None and self.exit_code() is None:
@@ -1251,17 +1281,26 @@ class OpenShellWindowsDriver(CredentialSinkMixin, SandboxDriver):
                     forward.wait(timeout=timeout)
                 except subprocess.TimeoutExpired:
                     forward.kill()
-            if self._name is not None and self._request is not None and not self._gateway_away():
-                try:
-                    self.gw.delete(self._name, timeout=max(timeout, 60.0))
-                except Exception as exc:
-                    self._note(f"delete {self._name} failed: {exc}")
+            # Also a stop that follows one whose delete failed: the gateway is asked again.
+            if self._name is not None and (self._request is not None or not self._gone):
+                if self._gateway_away():
+                    self._gone = self._ended_with_gateway()
+                else:
+                    try:
+                        self.gw.delete(self._name, timeout=max(timeout, 60.0))
+                        self._gone = True
+                    except Exception as exc:
+                        self._gone = self._ended_with_gateway()
+                        self._note(f"delete {self._name} failed: {exc}")
         finally:
             self._final_code = self._cached if self._cached is not None else 0
             self._request = None
             if self._log is not None:
                 self._log.close()
                 self._log = None
+
+    def sandbox_gone(self) -> bool:
+        return self._gone
 
     def last_exit_code(self) -> Optional[int]:
         """``exit_code`` as of the last look: nothing is asked of the gateway."""
