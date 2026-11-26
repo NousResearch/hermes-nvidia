@@ -2032,4 +2032,46 @@ try {
   out.modelReach.error = String(error && error.stack ? error.stack : error)
 }
 
+// Destinations for one program (tests/test_network_rows_js.py): two destinations that differ only in the program
+// are two rows with two keys, each row names its program, and Remove sends the list without that one rule.
+out.programRules = {}
+try {
+  const clientA = { host: 'download.example', port: 443, binary: '/opt/test/client-a' }
+  const clientB = { host: 'download.example', port: 443, binary: '/opt/test/client-b' }
+  const everyProgram = { host: 'download.example', port: 443 }
+  const control = { host: 'control.example', port: 443 }
+  const backupB = { host: 'backup.example', port: 443, binary: '/opt/test/client-b' }
+  const section = (allow, applied) => {
+    const sent = []
+    const send = (...args) => sent.push(args)
+    const status = applied ? { ...on, applied: { folders: [], network: { egress: 'deny', allow: applied } } } : {}
+    const tree = P.NetworkSection({ config: pageConfig(allow), status, send, sendQuietly: send, pending: false, ask: () => {} })
+    const lists = deep(tree, 'List')
+    const rows = deep(lists[lists.length - 1], 'Row')
+    return {
+      rows: rows.map(row => ({
+        key: row.props.key,
+        title: row.props.title,
+        note: row.props.note || null,
+        port: deepTexts(row.props.access).join(''),
+        pending: Boolean(row.props.meta)
+      })),
+      remove: index => {
+        rows[index].props.action.props.onClick()
+        return sent[sent.length - 1]
+      }
+    }
+  }
+  const listed = [clientA, clientB, everyProgram, control]
+  out.programRules = {
+    rows: section(listed).rows,
+    removeFirst: section(listed).remove(0),
+    removeEveryProgram: section(listed).remove(2),
+    twoHosts: section([clientA, backupB]).remove(0),
+    pending: section([clientA, clientB, control], [clientB, control]).rows.map(row => row.pending)
+  }
+} catch (error) {
+  out.programRules.error = String(error && error.stack ? error.stack : error)
+}
+
 process.stdout.write(JSON.stringify(out))

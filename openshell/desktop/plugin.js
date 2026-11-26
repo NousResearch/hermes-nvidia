@@ -266,6 +266,7 @@ const T = {
   address: 'Address',
   port: 'Port',
   portLabel: port => `Port ${port}`,
+  onlyFor: program => `Only for ${program}`,
   destinationTitle: 'Allow this destination?',
   reachTip: {
     model: "This profile's model on this computer is reachable from the sandbox.",
@@ -2055,7 +2056,9 @@ const THIS_COMPUTER = new Set(['localhost', '127.0.0.1', '::1', '[::1]', 'host.o
 
 // A destination is a website (`host`, where the driver filters by hostname) or an address/CIDR block.
 const ruleTarget = rule => rule.host || rule.cidr
-const ruleKey = rule => `${ruleTarget(rule)}|${rule.port}`
+// A destination is its host or address block, its port and, when it is for one program, that program: two rules
+// for one host and port are two rows, each marked pending and removed by itself.
+const ruleKey = rule => `${ruleTarget(rule)}|${rule.port}|${rule.binary || ''}`
 
 function NetworkSection({ config, status, send, sendQuietly, pending, ask }) {
   const network = config.network
@@ -2197,6 +2200,7 @@ function NetworkSection({ config, status, send, sendQuietly, pending, ask }) {
           meta: appliedRules && !appliedRules.has(ruleKey(rule)) ? h(PendingBadge) : null,
           mono: true,
           title: ruleTarget(rule),
+          note: rule.binary ? T.onlyFor(rule.binary) : null,
           access: h('span', { style: S.staticAccess }, T.portLabel(rule.port)),
           action: h(RemoveButton, { disabled: pending, onClick: () => remove(rule) })
         })
