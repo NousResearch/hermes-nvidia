@@ -54,6 +54,8 @@ hermes -p sbtest sandbox handback
 | What changed | How the list shows it | What Revert does |
 |---|---|---|
 | Cron jobs, scripts, hook files | One row each | Puts each back as it was at switch-on |
+| Programs in `bin`, `lsp/bin` and `node/bin`, and a program that a setting names | One row each | Moves a new program out, puts a changed one back |
+| An MCP server install in `mcp-installs`, new or changed | One row for the install | Moves the install out. A changed one is not put back: install that server again. |
 | A setting in `config.yaml`: an MCP server, a shell hook, a secret source, a provider, the model, the browser, delegation and every other key that is not in the list below | One row each | Puts each back as it was at switch-on |
 | The settings in the list below | A count ("Also changed: N other settings") | Nothing. They are counted but not reverted. |
 | Skills, memories and `SOUL.md` | A count ("Also changed: ...") | Nothing. They are counted but not reverted. |
@@ -148,3 +150,7 @@ The launcher records the folder as it is.
   Revert leaves it as the sandbox changed it and names it. Look at such a file before it runs.
 - A watched folder with more than 50,000 files is one row, "too many files to compare".
   Revert takes out every file in it that was not there at switch-on.
+- Files in `mcp-installs` are compared by name, size and time. They are not read and no copy is
+  kept, so Revert moves a changed install out whole and says which server to install again.
+- The copy taken at switch-on names the folders it covers. When it does not cover the program
+  folders, the list says "Not fully checked" for them, and the next switch-on covers them.

@@ -7,8 +7,10 @@ when the sandbox was switched on, and compares the home with it before the profi
 
 * ``take_baseline``  at switch-on (never at a restart): config.yaml parsed whole, a manifest (size, sha256, mode,
   link target) of every watched file and folder, each cron job's payload, and byte copies of the small files that
-  run (``handback/base/``). Text the agent reads (skills, memories, SOUL.md) is hashed only; env files and
-  credential stores are hashed, never copied.
+  run (``handback/base/``). Watched: ``scripts``, ``hooks``, the folders this computer runs programs from
+  (``PROGRAM_TREES``) and every file a setting or a cron job names, also one that is not there until later.
+  Text the agent reads (skills, memories, SOUL.md) is hashed only; env files and credential stores are hashed,
+  never copied.
 * ``diff``           one row per changed file that runs here and per changed setting (Tier 1); counts and a list
   for the text the agent reads (Tier 2); a count for the other settings (``OTHER_SETTINGS``, ``OTHER_TEXTS``).
 * ``revert``         puts the baseline's value or file back for the rows named and moves the sandbox's version
@@ -42,6 +44,7 @@ Limits, on purpose: the listing is bounded (``MAX_ENTRIES`` for each watched fol
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import io
 import json
@@ -117,8 +120,19 @@ JOB_FIELDS = ("prompt", "script", "skills", "no_agent", "schedule", "workdir", "
               "provider", "base_url", "monitor_script", "monitor_url", "interpreter", "context_from", "deliver",
               "failure_deliver", "enabled")
 CONFIG, JOBS, ALLOWLIST = "config.yaml", "cron/jobs.json", "shell-hooks-allowlist.json"
-TIER1_TREES = {"scripts": "Script", "hooks": "Hook file", "plugins": "Plugin file", "desktop-plugins": "Plugin file"}
-COPIED_TREES = ("scripts", "hooks")  # plugin folders are read-only in the sandbox: hashed, not copied
+TIER1_TREES = {"scripts": "Script", "hooks": "Hook file", "plugins": "Plugin file", "desktop-plugins": "Plugin file",
+               "bin": "Program file", "lsp/bin": "Program file", "node/bin": "Program file",
+               "mcp-installs": "MCP install"}
+# The folders this computer runs programs from by name or by a setting. The sandbox writes them (its own installs
+# go there), so they are watched like ``scripts``: a new file is a row and a revert moves it out.
+PROGRAM_TREES = ("bin", "lsp/bin", "node/bin", "mcp-installs")
+COPIED_TREES = ("scripts", "hooks", "bin", "lsp/bin", "node/bin")  # read, hashed, and copied while the limits allow
+# Whole installs with their dependencies live here, one folder each. The record has one entry for an install: the
+# number of its files and a digest of their names, sizes and times (``_install_summary``). Its files are never
+# read and never copied, so an install that differs is one row, and a revert moves it out whole.
+LISTED_TREES = ("mcp-installs",)
+# A record names the folders it covers (``trees``). A record without that list covers these.
+_DEFAULT_TREES = ("scripts", "hooks", "plugins", "desktop-plugins")
 TIER2_TREES = {"memories": "Memory", "skills": "Skill"}
 TIER2_FILES = {"SOUL.md": "Context file"}
 ENV_FILES = (".env", ".op.env")
@@ -253,6 +267,49 @@ def _listing(folder) -> list[tuple[str, Optional[os.stat_result]]]:
     except OSError:  # gone, not a folder, or not readable
         return []
     return sorted(out, key=lambda item: item[0])
+
+
+def _install_summary(path: str) -> dict:
+    """What is known of one install folder without reading a file: the number of its files, and a digest of the
+    name, size and time of each (of a link: where it points; a link is never followed). ``MAX_ENTRIES`` entries
+    are looked at; ``cut`` says that the folder holds more than that."""
+    digest, files, left, cut, stack = hashlib.sha256(), 0, MAX_ENTRIES, False, [(path, "")]
+    while stack and not cut:
+        folder, rel = stack.pop()
+        below = []
+        for name, st in _listing(folder):
+            if left <= 0:
+                cut = True
+                break
+            left -= 1
+            child, kind = f"{rel}/{name}" if rel else name, _kind(st)
+            if kind == "dir":
+                below.append((os.path.join(folder, name), child))
+                line = f"{child}\0dir"
+            elif kind == "link":
+                try:
+                    line = f"{child}\0link\0{os.readlink(os.path.join(folder, name))}"
+                except OSError:
+                    line = f"{child}\0link"
+            else:
+                files += 1
+                line = f"{child}\0{kind}\0{st.st_size}\0{st.st_mtime_ns}"
+            digest.update(line.encode("utf-8", "surrogatepass") + b"\n")
+        stack.extend(reversed(below))
+    return {"files": files, "digest": digest.hexdigest(), **({"cut": True} if cut else {})}
+
+
+def _install_state(entry: dict) -> list:
+    """What of an entry at the top of a folder of installs is compared: a folder by its summary, a file by size and
+    time, a link by where it points."""
+    if entry["type"] == "dir":
+        return ["dir", entry.get("install")]
+    return [entry["type"], entry.get("link"), entry.get("size"), entry.get("mtime_ns")]
+
+
+def _other_volume(exc: OSError) -> bool:
+    """Whether a rename failed because the two places are on different volumes."""
+    return exc.errno == errno.EXDEV or getattr(exc, "winerror", None) == 17
 
 
 class _Home:
@@ -792,9 +849,17 @@ def _credential_rels(home: _Home) -> list[str]:
     return sorted(set(rels) | set(ENV_FILES))
 
 
-def _referenced(home: _Home, doc: Optional[dict], jobs: Optional[list]) -> list[str]:
-    """Files in the home that a Tier 1 entry or a cron job names (a hook's script, an MCP server's program, a
-    secret helper): they run when the entry does, wherever in the home they sit."""
+def _tree_of(rel: str) -> Optional[str]:
+    """The watched folder *rel* lies in (``lsp/bin`` for ``lsp/bin/server``), or None."""
+    parts = rel.split("/")
+    return next((root for root in ("/".join(parts[:2]), parts[0]) if root in TIER1_TREES or root in TIER2_TREES), None)
+
+
+def _referenced(home: _Home, doc: Optional[dict], jobs: Optional[list], absent: bool = False) -> list[str]:
+    """Files in the home that a setting which is a row or a cron job names (a hook's script, an MCP server's
+    program, a secret helper, the browser): they run when the entry does, wherever in the home they sit. With
+    *absent*, also the paths such an entry names where nothing is: a program that appears there during the
+    session is the sandbox's. ``_MAX_REFERENCED`` names at most."""
     texts: list[str] = []
 
     def collect(value):
@@ -805,10 +870,13 @@ def _referenced(home: _Home, doc: Optional[dict], jobs: Optional[list]) -> list[
                 collect(item)
 
     doc = doc or {}
-    collect([doc.get(key) for key in PER_ENTRY] + [_dig(doc, key.split(".")) for key in WHOLE])
+    collect([value for key, value in doc.items() if key not in OTHER_SETTINGS])
     collect([job.get(f) for job in jobs or [] for f in ("script", "monitor_script", "interpreter")])
-    found = []
+    found: list[str] = []
+    seen: set = set()
     for text in texts:
+        if len(found) >= _MAX_REFERENCED:
+            break
         if len(text) > 2048 or "\n" in text:
             continue
         try:
@@ -819,13 +887,18 @@ def _referenced(home: _Home, doc: Optional[dict], jobs: Optional[list]) -> list[
             token = token.strip("'\"")
             for name in ("${HERMES_HOME}", "$HERMES_HOME", "%HERMES_HOME%"):
                 token = token.replace(name, home.path)
-            if not token:
+            if not token or "://" in token:  # nothing, or an address: never a file of the home
                 continue
             path = os.path.normpath(os.path.join(home.path, os.path.expanduser(token)))
             if not _inside(home.path, path) or os.path.normcase(path) == os.path.normcase(home.path):
                 continue
             rel = os.path.relpath(path, home.path).replace("\\", "/")
-            if rel not in found and _kind_at(path) == "file":
+            if rel in seen:
+                continue
+            seen.add(rel)
+            kind = _kind_at(path)
+            # A bare word is a name only while a file of that name is in the home; a path is one either way.
+            if kind == "file" or (absent and kind == "absent" and ("/" in token or "\\" in token)):
                 found.append(rel)
     return found[:_MAX_REFERENCED]
 
@@ -836,7 +909,8 @@ class _Scan:
     small files that run are kept (up to ``COPY_MAX_TOTAL``), the two shared files first."""
 
     def __init__(self, home: _Home, *, copies: bool = False, known: Optional[dict] = None, quick: bool = False,
-                 referenced: Optional[list] = None, stores: Iterable[str] = ()):
+                 referenced: Optional[list] = None, stores: Iterable[str] = (), leave: Iterable[str] = ()):
+        """*leave*: watched folders that are not walked (the record this look is compared with has none of them)."""
         self.home, self.manifest, self.paths, self.data, self.incomplete = home, {}, {}, {}, []
         self._folded: dict[str, str] = {}
         self._known = {home.fold(rel): entry for rel, entry in (known or {}).items()} if quick else {}
@@ -847,8 +921,11 @@ class _Scan:
         self._add(CONFIG, want=COPY_MAX_FILE)
         self._add(JOBS, want=COPY_MAX_FILE)
         self._add(ALLOWLIST, want=want)
-        for root in TIER1_TREES:
-            if home.fold(root) not in self.host_written:  # the sandbox cannot write there: not compared
+        # The sandbox cannot write the host-written folders: not compared. The program folders come last, after
+        # the files that entries name, so a large install never takes the copies of what the settings run.
+        self.trees = [root for root in TIER1_TREES if home.fold(root) not in self.host_written and root not in leave]
+        for root in self.trees:
+            if root not in PROGRAM_TREES:
                 self._tree(root, tier=1, want=want if root in COPIED_TREES else 0)
         store_rels = sorted(set(_credential_rels(home)) | set(stores))
         for rel in store_rels:
@@ -861,6 +938,11 @@ class _Scan:
             key = home.fold(rel)
             if not any(key == store or key.startswith(store + "/") for store in hidden):
                 self._add(rel, want=want, ref=True)
+        for root in self.trees:
+            if root in LISTED_TREES:
+                self._installs(root)
+            elif root in PROGRAM_TREES:
+                self._tree(root, tier=1, want=want if root in COPIED_TREES else 0)
         for rel in TIER2_FILES:
             self._add(rel, tier=2)
         for root in TIER2_TREES:
@@ -871,10 +953,11 @@ class _Scan:
             self.incomplete.append(CONFIG)  # a link: not read, so its settings are not compared
 
     def _add(self, rel: str, path: Optional[str] = None, *, tier: int = 1, want: int = 0, store: bool = False,
-             ref: bool = False, st: Optional[os.stat_result] = None) -> Optional[dict]:
+             ref: bool = False, st: Optional[os.stat_result] = None, read: bool = True) -> Optional[dict]:
         """Record what is at *rel*. *path* and *st* are given by a listing, whose folders are real ones, and its
-        files are read after the listing, several at a time; a name looked up by itself is read at once, and only
-        when no link stands between it and the home."""
+        files are read after the listing, several at a time (not at all with *read* False: an entry at the top
+        of a folder of installs); a name looked up by itself is read at once, and only when no link stands between
+        it and the home."""
         key = self.home.fold(rel)
         if key in self._folded:
             return self.manifest[self._folded[key]]
@@ -896,7 +979,7 @@ class _Scan:
             entry, data = self.home.entry(path, want_bytes=want, known=known, st=st, read=not walked)
             if entry is None:
                 return None
-            if walked and entry["type"] == "file":
+            if walked and entry["type"] == "file" and read:
                 self._later.append((rel, path, st, want, known))
                 self._copy_left -= st.st_size if want else 0
         entry["tier"] = tier
@@ -943,6 +1026,26 @@ class _Scan:
                 del self._folded[self.home.fold(rel)], self.manifest[rel], self.paths[rel]
             elif data is not None:
                 self.data[rel] = data
+
+    def _installs(self, root: str) -> None:
+        """A folder of installs (``LISTED_TREES``): one entry for each thing at its top, ``MAX_ENTRIES`` at most. A
+        folder there is an install and is recorded by its summary; nothing below it is an entry of its own, so
+        the record stays small however many files an install has, and each install has a limit of its own."""
+        top = self._add(root, tier=1)
+        if top is None or top["type"] != "dir":
+            return
+        left = MAX_ENTRIES
+        for name, st in _listing(self.paths[root]):
+            if left <= 0:
+                self.incomplete.append(root)
+                return
+            left -= 1
+            child, path = f"{root}/{name}", os.path.join(self.paths[root], name)
+            entry = self._add(child, path, tier=1, st=st, read=False)
+            if entry is not None and entry["type"] == "dir" and "install" not in entry:
+                entry["install"] = _install_summary(path)
+                if entry["install"].get("cut"):
+                    self.incomplete.append(child)
 
     def _tree(self, root: str, *, tier: int, want: int) -> None:
         top = self._add(root, tier=tier)
@@ -1041,7 +1144,7 @@ def take_baseline(home, state_dir, *, replace: bool = False, case_insensitive: O
     base = {"version": VERSION, "taken_at": _stamp(), "home": where.path, "case_insensitive": where.ci,
             "config": {"state": _file_state(scan, CONFIG, scan.config), "doc": scan.config},
             "cron": {"state": _file_state(scan, JOBS, scan.jobs), "jobs": jobs},
-            "manifest": scan.manifest, "incomplete": scan.incomplete,
+            "manifest": scan.manifest, "incomplete": scan.incomplete, "trees": scan.trees,
             "limits": {"entries": MAX_ENTRIES, "copy_file": COPY_MAX_FILE, "copy_total": COPY_MAX_TOTAL,
                        "hash_file": HASH_MAX_FILE, "link_depth": LINK_WALK_DEPTH}}
     _write_json(store / "baseline.json", base)
@@ -1105,19 +1208,25 @@ class _Diff:
         before = self.base["manifest"]
         self.before = {self.home.fold(rel): (rel, entry) for rel, entry in before.items()}
         self.rows, self.items, self.other, self.base_doc = [], [], [], {}
+        self.installs: set = set()  # the installs that are a row: a file inside one is no second row
+        # A record has no entry of a folder it does not cover, so every file there would read as new. Such a
+        # folder is not compared against that record, and ``incomplete`` names it.
+        walked = self.base.get("trees")
+        self.unrecorded = sorted(set(TIER1_TREES) - set(walked if isinstance(walked, list) else _DEFAULT_TREES))
         if not listed:
             self.now, self.incomplete = {}, sorted(set(self.base.get("incomplete") or []))
             self._from_copies()
             self.rows.sort(key=lambda row: row["id"])
             return
-        self.scan = _Scan(self.home, known=before, quick=quick,
-                          referenced=[rel for rel, e in before.items() if e.get("ref")],
-                          stores=[rel for rel, e in before.items() if e.get("store")])
+        self.scan = _Scan(self.home, known=before, quick=quick, referenced=self._named(),
+                          stores=[rel for rel, e in before.items() if e.get("store")], leave=self.unrecorded)
         self.now = {self.home.fold(rel): (rel, entry) for rel, entry in self.scan.manifest.items()}
         self.incomplete = sorted(set(self.base.get("incomplete") or []) | set(self.scan.incomplete))
         self._part(self._config, CONFIG)
         self._part(self._cron, JOBS)
         self._files()
+        unrecorded = [root for root in self.unrecorded if self.home.fold(root) not in self.scan.host_written]
+        self.incomplete = sorted(set(self.incomplete) | set(unrecorded))
         answers = _read_json(self.store / "answers.json") or {}
         for row in self.rows:
             saved = answers.get(row["id"])
@@ -1130,6 +1239,18 @@ class _Diff:
     def pair(self, rel: str) -> tuple[dict, dict]:
         key = self.home.fold(rel)
         return self.before.get(key, (rel, _ABSENT))[1], self.now.get(key, (rel, _ABSENT))[1]
+
+    def _named(self) -> list[str]:
+        """The files the settings and cron jobs of the record name: the ones it holds an entry of, and the paths
+        they name where nothing was at switch-on (a program that appears there is a row)."""
+        named = [rel for rel, entry in self.base["manifest"].items() if entry.get("ref")]
+        doc, jobs = self.base["config"].get("doc"), self.base["cron"].get("jobs")
+        try:
+            named += _referenced(self.home, doc if isinstance(doc, dict) else {},
+                                 list(jobs.values()) if isinstance(jobs, dict) else [], absent=True)
+        except Exception:  # the record's own settings cannot be walked: the entries it holds are compared
+            pass
+        return list(dict.fromkeys(named))
 
     def _whole(self, rel: str, detail: str) -> None:
         """One row for the whole of a shared file: a revert puts its copy back."""
@@ -1156,8 +1277,10 @@ class _Diff:
 
     def _from_copies(self) -> None:
         """The rows of a revert without a list: each file a copy was kept of that is gone or differs from that copy,
-        and each file in the folders that run (``COPIED_TREES``) that the record does not have. A folder whose
-        listing was cut short at switch-on is left out: its new files cannot be told from the profile's own. A
+        each file in the folders that run (``COPIED_TREES``) that the record does not have, each install that is
+        new or differs (``LISTED_TREES``), and each program a setting names that was not there at switch-on. A
+        folder whose listing was cut short at switch-on, or that the record does not cover, is left out: its new
+        files cannot be told from the profile's own. A
         folder with more entries than ``MAX_ENTRIES`` is one row for the folder (``folder_cut``) in place of a row
         for each new file, so the sandbox cannot make the list longer than that."""
         for key, (rel, was) in sorted(self.before.items()):
@@ -1173,8 +1296,23 @@ class _Diff:
             what = "removed" if now is _ABSENT else "changed"
             label = "Program file" if was.get("ref") else TIER1_TREES.get(rel.split("/")[0], "File")
             self.rows.append(_row(f"file:{rel}", f"file_{what}", label, rel, what, state=_file_row_state(now), rel=rel))
+        for rel in self._named():
+            if self.home.fold(rel) not in self.before and self.home.plain_parents(rel):
+                now = self.home.entry(self.home.actual(rel), read=False)[0]
+                if now is not None and now["type"] == "file" and _tree_of(rel) is None:
+                    self.rows.append(_row(f"file:{rel}", "file_new", "Program file", rel, "new",
+                                          state=_file_row_state(now), rel=rel))
+        for root in LISTED_TREES:
+            if root in self.incomplete or root in self.unrecorded or _kind_at(self.home.actual(root)) != "dir":
+                continue
+            for name, st in _listing(self.home.actual(root))[:MAX_ENTRIES]:
+                child, path = f"{root}/{name}", os.path.join(self.home.actual(root), name)
+                now = self.home.entry(path, st=st, read=False)[0] or _ABSENT
+                if now["type"] == "dir":
+                    now = {**now, "install": _install_summary(path)}
+                self._install(child, self.before.get(self.home.fold(child), (child, _ABSENT))[1], now, set())
         for root in COPIED_TREES:
-            if root in self.incomplete or _kind_at(self.home.actual(root)) != "dir":
+            if root in self.incomplete or root in self.unrecorded or _kind_at(self.home.actual(root)) != "dir":
                 continue
             stack, mark, left = [(self.home.actual(root), root)], len(self.rows), MAX_ENTRIES
             while stack:
@@ -1278,12 +1416,17 @@ class _Diff:
             return  # the two shared files have their own rows; elsewhere only a link leading out counts
         if key.split("/")[0] in self.scan.host_written:
             return  # the sandbox cannot write there, whether or not the record names them
+        tree = _tree_of(rel)
+        if tree in LISTED_TREES and rel.count("/") == tree.count("/") + 1:
+            return self._install(rel, was, now, cut)
+        if tree in LISTED_TREES and self.home.fold("/".join(rel.split("/")[:tree.count("/") + 2])) in self.installs:
+            return  # a program a setting names inside an install that is a row: that row covers it
         if not store and "dir" in (was["type"], now["type"]) and (was["type"] == now["type"] or _ABSENT in (was, now)):
             return  # a folder that is there, came or went: its files are the rows
         if was is not _ABSENT and now is not _ABSENT and _same(was, now):
             return
         what = "new" if was is _ABSENT else "removed" if now is _ABSENT else "changed"
-        if rel.split("/")[0] in cut and what != "changed":
+        if (_tree_of(rel) or rel.split("/")[0]) in cut and what != "changed":
             return  # the listing did not finish there: only what both looks saw is compared
         state = _file_row_state(now)
         if store:
@@ -1300,13 +1443,37 @@ class _Diff:
                                   can_restore=what == "new"))
         elif known["tier"] == 1:
             label = ("Program file" if known.get("ref") else "Hook approvals" if rel == ALLOWLIST
-                     else TIER1_TREES.get(rel.split("/")[0], "File"))
+                     else TIER1_TREES.get(_tree_of(rel) or "", "File"))
             self.rows.append(_row(f"file:{rel}", f"file_{what}", label, rel, what, state=state, rel=rel,
                                   can_restore=what == "new" or bool(was.get("copy"))))
         else:
             label = TIER2_FILES.get(rel) or TIER2_TREES.get(rel.split("/")[0], "File")
             self.items.append(_row(f"t2:{rel}", f"file_{what}", label, rel, what, tier=2, state=state, rel=rel,
                                    can_restore=what == "new"))
+
+    def _install(self, rel: str, was: dict, now: dict, cut: set) -> None:
+        """One row for an entry at the top of a folder of installs that is new, differs or is gone. Its detail
+        says how the number of files differs: what changed in which file is not known, by name, size and time."""
+        if was is not _ABSENT and now is not _ABSENT and _install_state(was) == _install_state(now):
+            return
+        what = "new" if was is _ABSENT else "removed" if now is _ABSENT else "changed"
+        if _tree_of(rel) in cut and what != "changed":
+            return  # the listing of the folder of installs did not finish: only what both looks saw is compared
+
+        def files(count: int) -> str:
+            return f"{count:,} file" if count == 1 else f"{count:,} files"
+
+        detail = what
+        if what == "new" and now["type"] == "dir":
+            detail = f"new, {files((now.get('install') or {}).get('files') or 0)}"
+        elif what == "changed" and was["type"] == now["type"] == "dir":
+            had, has = ((entry.get("install") or {}).get("files") or 0 for entry in (was, now))
+            detail = ("changed: files differ in name, size or time" if had == has
+                      else f"changed: {files(abs(has - had))} {'more' if has > had else 'fewer'}")
+        self.installs.add(self.home.fold(rel))
+        self.rows.append(_row(f"install:{rel}", f"install_{what}", TIER1_TREES[_tree_of(rel)], rel, detail,
+                              state=_install_state(now) if now is not _ABSENT else ["absent"], rel=rel,
+                              can_restore=what != "removed"))
 
     def tier2(self) -> dict:
         known, skills = set(self.before) | set(self.now), set()
@@ -1388,6 +1555,7 @@ class _Revert:
         self.results: dict[str, dict] = {}
         self.left: list[str] = []
         self.unreverted: list[str] = []  # the profile's own files left as the sandbox changed them: no copy
+        self.reinstall: list[str] = []   # installs the profile had at switch-on that were moved out
 
     def _held(self) -> Path:
         if self.dir is None:
@@ -1421,11 +1589,14 @@ class _Revert:
         target = self._held() / "files" / rel
         try:
             _replace(path, target)
-        except OSError:  # another volume: a file is copied over, a folder stays where it is
-            if kind != "file":
+        except OSError as exc:  # another volume: a file is copied over, a folder file by file (a link as a link)
+            if kind == "file":
+                _write(target, self.home.entry(path, want_bytes=os.lstat(path).st_size)[1] or b"")
+                os.unlink(path)
+            elif _other_volume(exc):
+                shutil.move(path, os.fspath(target))
+            else:
                 raise
-            _write(target, self.home.entry(path, want_bytes=os.lstat(path).st_size)[1] or b"")
-            os.unlink(path)
         _tighten(target)
         return f"files/{rel}"
 
@@ -1510,6 +1681,25 @@ class _Revert:
             return self._skip(row, "not changed" if was is _ABSENT else "no copy to restore", left=False)
         self._done(row, "restored" if put_back else "held", put_back or was is _ABSENT, held=held, link=link)
 
+    def install(self, row: dict) -> None:
+        """An entry at the top of a folder of installs that is new or differs: moved out whole to the held folder
+        (one rename where both folders are on one volume), whichever of the two it is. An install that differs is
+        never left for this computer to run, and nothing can be put back in its place: no copy of an install is
+        kept. ``reinstall`` names the ones the profile had at switch-on."""
+        rel = row["_rel"]
+        if not self.home.plain_parents(rel):
+            return self._skip(row, "a link is in the way")
+        if row["kind"] == "install_removed":
+            return self._skip(row, "no copy to restore", left=False)
+        link = _kind_at(self.home.actual(rel)) == "link"
+        held = self._hold(rel)
+        if not (held or link):
+            return self._skip(row, "not changed", left=False)
+        self._prune(rel)
+        if row["kind"] == "install_changed":
+            self.reinstall.append(rel)
+        self._done(row, "held", row["kind"] == "install_new", held=held)
+
     def folder(self, row: dict) -> None:
         """A folder with more files than one listing takes. Every file and folder in it that the record does not
         have is moved out (a look by name: it needs no limit), and every file a copy was kept of that is gone or
@@ -1527,7 +1717,7 @@ class _Revert:
                 if self.home.fold(child) not in self.found.before:
                     self._hold(child)
                     moved = True
-                elif _kind(st) == "dir":
+                elif _kind(st) == "dir" and root not in LISTED_TREES:  # an install is one entry: not looked into
                     stack.append((os.path.join(folder, name), child))
         prefix = self.home.fold(root) + "/"
         for key, (base_rel, entry) in sorted(self.found.before.items()):
@@ -1631,6 +1821,8 @@ class _Revert:
 
         for row in of("link_"):  # links first: nothing below is restored through one
             self._try(self.link, row)
+        for row in of("install_"):
+            self._try(self.install, row)
         for row in of("config_file", "cron_file", "file_", "env_"):
             self._try(self.file, row)
         self._try(self.config_keys, of("config_added", "config_changed", "config_removed"))
@@ -1645,6 +1837,7 @@ class _Revert:
             _write_json(self._held() / "held.json", {"at": _stamp(), "rows": self.index})
         return {"open": True, "reverted": reverted, "skipped": self.skipped, "left": sorted(self.left),
                 **({"unreverted": sorted(self.unreverted)} if self.unreverted else {}),
+                **({"reinstall": sorted(self.reinstall)} if self.reinstall else {}),
                 "held": str(self.dir) if self.dir is not None else None, "results": [self.results[i] for i in reverted]}
 
 
@@ -1659,6 +1852,8 @@ def revert(home, state_dir, row_ids="all", *, stop: Optional[threading.Event] = 
     Tier 1 rows asked for whose sandbox version is still in the home afterwards: with any, the profile is not
     ready to be handed back. ``unreverted`` (only when there are any) names the rows that were left on purpose:
     the profile's own file, changed, with no copy to put back (``NO_COPY_REVERT``); they hold nothing up.
+    ``reinstall`` (only when there are any) names the installs the profile had at switch-on that differed and
+    were moved out: they are not put back, and the servers have to be installed again.
     Once *stop* is set nothing more is changed in the home: the rows not reached are skipped and in ``left``."""
     found = _Diff(home, state_dir)
     if not found.open:
@@ -1671,10 +1866,10 @@ def revert_from_copies(home, state_dir, *, stop: Optional[threading.Event] = Non
     """A revert when the list cannot be made (the look at the whole home fails or does not come back). It needs
     no such look: every file a copy was kept of at switch-on (config.yaml and cron/jobs.json whole, the hook
     approvals, scripts, hook files, the programs entries name) that is gone or differs from that copy is put back,
-    and every file in ``scripts`` and ``hooks`` that the record does not have is moved out. The answer has the
-    shape of ``revert``'s, one ``file:``, ``cfgfile:`` or ``cronfile:`` row per file. What only the full look finds
-    stays as it is: a link that leads out of the home, a changed file no copy was kept of, the text the agent
-    reads; the baseline is left open for a later review."""
+    every file in the folders that run that the record does not have is moved out, and so is every install that
+    is new or differs. The answer has the shape of ``revert``'s, one row per file or install. What only the full
+    look finds stays as it is: a link that leads out of the home, a changed file no copy was kept of, the text
+    the agent reads; the baseline is left open for a later review."""
     found = _Diff(home, state_dir, listed=False)
     if not found.open:
         return {"open": False, "reverted": [], "skipped": [], "left": [], "held": None, "results": []}
@@ -1727,6 +1922,11 @@ def _state_now(where: _Home, item: dict, doc: Optional[dict], jobs: Optional[lis
     rel = item.get("rel")
     if not isinstance(rel, str) or not where.plain_parents(rel):
         return ""
+    if kind.startswith("install_"):
+        now = where.entry(where.actual(rel), read=False)[0]
+        if now is not None and now["type"] == "dir":
+            now["install"] = _install_summary(where.actual(rel))
+        return _digest(_install_state(now) if now is not None else ["absent"])
     now = where.entry(where.actual(rel))[0] or _ABSENT
     if kind == "link_outside":
         return _digest(now.get("link"))

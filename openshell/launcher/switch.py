@@ -1143,6 +1143,16 @@ def unfinished(view: dict, left: list, turning: str = "off") -> str:
             f"keep the changes (--keep) to turn {turning} without it.")
 
 
+def install_again(rels: list) -> str:
+    """What a revert says about the MCP server installs it moved out that the profile had at switch-on."""
+    shown = [str(rel).rpartition("/")[2] for rel in rels]
+    listed = ", ".join(shown[:3]) + (f" and {len(shown) - 3} more" if len(shown) > 3 else "")
+    if len(shown) == 1:
+        return f"The sandbox changed the MCP server install {listed}, so it was moved out: install that server again."
+    return (f"The sandbox changed {len(shown)} MCP server installs ({listed}), so they were moved out: install "
+            "those servers again.")
+
+
 def not_reviewed(error: str) -> str:
     return f"Couldn't review the last sandbox session's changes ({error})."
 
@@ -1340,6 +1350,11 @@ def hand_back(layout, view: dict, answer: Optional[str], *, record_keep: bool = 
     if unreverted:
         # The profile's own files, changed in the sandbox, with no copy to put back: left in place and named.
         result.update(unreverted=unreverted, problem=left_unreverted(view, unreverted))
+    reinstall = list(outcome.get("reinstall") or [])
+    if reinstall:
+        # Installs the profile had that the sandbox changed: moved out with the rest, and nothing takes their place.
+        result.update(reinstall=reinstall,
+                      problem=" ".join(filter(None, [result.get("problem"), install_again(reinstall)])))
     if outcome["left"]:
         if answer != "keep":
             # A revert that was told to stop left rows for another cause than a file in use, and says so.

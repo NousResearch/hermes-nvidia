@@ -185,7 +185,8 @@ def test_what_is_not_compared_is_exactly_what_every_launch_grants_read_only_in_t
     assert in_home_read_only == skipped and lay.home in grants.readwrite
     assert not skipped & {p.name for p in grants.readwrite}
     # everything else the hand-back watches is in the folder the sandbox writes
-    assert set(H.TIER1_TREES) - skipped == set(H.COPIED_TREES) == {"scripts", "hooks"}
+    watched = {"scripts", "hooks", "bin", "lsp/bin", "node/bin", "mcp-installs"}
+    assert set(H.TIER1_TREES) - skipped == {*H.COPIED_TREES, *H.LISTED_TREES} == watched
 
 
 def test_the_linux_driver_mounts_those_folders_read_only(tmp_path):
