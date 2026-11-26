@@ -321,17 +321,17 @@ def test_other_settings_are_counted_not_listed_as_rows(box):
 
     def mutate(doc):
         doc["display"]["skin"] = "dark"
-        doc["model"]["default"] = "gpt-b"  # the model's name is not what moves a key
+        doc["model"]["default"] = "gpt-b"
         doc["timezone"] = "UTC"
         doc["telemetry"] = {"other": 1}
 
     edit_config(home, mutate)
     result = H.diff(home, state)
-    assert result["rows"] == []
-    assert result["other_settings"] == {"count": 4, "paths": ["display.skin", "model", "telemetry.other", "timezone"]}
+    assert [row["id"] for row in result["rows"]] == ["cfg:model", "cfg:telemetry.other", "cfg:timezone"]
+    assert result["other_settings"] == {"count": 1, "paths": ["display.skin"]}  # only how Hermes looks
 
 
-def test_the_rest_of_a_model_entry_is_an_ordinary_setting(box):
+def test_every_field_of_a_model_entry_counts(box):
     home, state, _ = box
     edit_config(home, _set(("providers",), {"lab": {"base_url": "https://p.example.net/v1", "models": ["a"]}}))
     edit_config(home, _set(("custom_providers",), [{"name": "c", "base_url": "https://c.example.net/v1", "models": ["a"]}]))
@@ -339,8 +339,8 @@ def test_the_rest_of_a_model_entry_is_an_ordinary_setting(box):
     edit_config(home, _set(("providers", "lab", "models"), ["a", "b"]))
     edit_config(home, _set(("custom_providers",), [{"name": "c", "base_url": "https://c.example.net/v1", "models": ["z"]}]))
     result = H.diff(home, state)
-    assert result["rows"] == []
-    assert result["other_settings"] == {"count": 2, "paths": ["custom_providers", "providers.lab"]}
+    assert [row["id"] for row in result["rows"]] == ["cfg:custom_providers", "cfg:providers.lab"]
+    assert result["other_settings"] == {"count": 0, "paths": []}
 
 
 def test_every_tier_1_key_of_the_report_is_watched():
@@ -348,8 +348,7 @@ def test_every_tier_1_key_of_the_report_is_watched():
                 "approvals", "plugins", "security", "terminal", "network", "model", "fallback_model", "providers",
                 "custom_providers", "fallback_providers", "auxiliary", "telemetry.shared_metrics"):
         assert key in H.TIER1_KEYS, key
-    for field in ("provider", "base_url", "key_env", "api_key_env", "api_key"):
-        assert field in H.MODEL_FIELDS
+    assert not {key.split(".")[0] for key in H.TIER1_KEYS} & set(H.OTHER_SETTINGS)
     for field in ("prompt", "script", "skills", "no_agent", "schedule", "workdir", "enabled_toolsets", "model",
                   "provider", "base_url", "monitor_script", "monitor_url", "interpreter", "context_from", "deliver",
                   "failure_deliver", "enabled"):
@@ -951,7 +950,7 @@ def plant_the_four(home: Path) -> None:
     text = (home / "config.yaml").read_bytes()
     put(home / "config.yaml", text.replace(b"  skin: light\n", b"  skin: dark   # the sandbox liked it dark\n") + b"""\
 # added in the sandbox
-mcp_servers_note: kept
+max_live_sessions: 4
 secrets:
   command:
     enabled: true
@@ -998,14 +997,14 @@ def test_the_four_proven_changes_are_listed_and_revert_all_gives_the_baseline_ba
     assert rows["cfg:secrets.command"]["detail"] == "new, runs sh -c 'id >> /tmp/markers/w.log'"
     assert rows["cfg:hooks.on_session_start"]["detail"] == "new, runs hook-injected.sh"
     assert rows["cfg:hooks_auto_accept"]["detail"] == "turned on"
-    assert result["other_settings"] == {"count": 2, "paths": ["display.skin", "mcp_servers_note"]}
+    assert result["other_settings"] == {"count": 2, "paths": ["display.skin", "max_live_sessions"]}
     sandbox_config = (home / "config.yaml").read_bytes()
 
     done = H.revert(home, state, "all")
     assert done["reverted"] == FOUR and done["skipped"] == [] and done["open"] is True
     assert tier1_state(home) == before  # files byte for byte, config.yaml key for key, each job's payload
     doc = load(home / "config.yaml")
-    assert doc["display"]["skin"] == "dark" and doc["mcp_servers_note"] == "kept"  # the sandbox's other edits stay
+    assert doc["display"]["skin"] == "dark" and doc["max_live_sessions"] == 4  # the sandbox's other edits stay
     assert "secrets" not in doc and "hooks" not in doc and "hooks_auto_accept" not in doc
     text = (home / "config.yaml").read_text(encoding="utf-8")
     assert "# Profile settings" in text and "# my server" in text and "# the sandbox liked it dark" in text
@@ -1067,23 +1066,24 @@ def test_what_a_config_revert_does_to_comments_and_formatting(box):
     home, state, _ = box
     users = (b"# top\nmodel:\n    default: gpt-a\n\n# about hooks\nhooks_auto_accept: false\n"
              b"# about display\ndisplay:\n    skin: \"light\"   # inline\nmcp_servers:\n    mine:\n"
-             b"        command: node\n# after servers, as it was\ntimezone: UTC\n# bottom\n")
+             b"        command: node\n# after servers, as it was\nmax_live_sessions: 4\n# bottom\n")
     put(home / "config.yaml", users)
     H.take_baseline(home, state)
     sandboxs = (b"# top\nmodel:\n    default: gpt-a\n\n# about hooks\nhooks_auto_accept: true\n"
                 b"# about display\ndisplay:\n    skin: \"light\"   # inline\nmcp_servers:\n    mine:\n"
                 b"        command: /tmp/evil\n# after servers, rewritten in the sandbox\nsecrets:\n"
-                b"    command:\n        enabled: true\n# after secrets\ntimezone: UTC\n# bottom\n")
+                b"    command:\n        enabled: true\n# after secrets\nmax_live_sessions: 4\n# bottom\n")
     put(home / "config.yaml", sandboxs)
     assert sorted(by_id(H.diff(home, state))) == ["cfg:hooks_auto_accept", "cfg:mcp_servers.mine", "cfg:secrets.command"]
     H.revert(home, state, "all")
     assert (home / "config.yaml").read_bytes() == users  # nothing else differed: the user's own bytes
-    put(home / "config.yaml", sandboxs.replace(b"timezone: UTC", b"timezone: Asia/Tokyo"))  # and an ordinary setting
+    # and one of the other settings, which stays
+    put(home / "config.yaml", sandboxs.replace(b"max_live_sessions: 4", b"max_live_sessions: 8"))
     H.revert(home, state, "all")
     assert (home / "config.yaml").read_text(encoding="utf-8") == (
         "# top\nmodel:\n  default: gpt-a\n\n# about hooks\nhooks_auto_accept: false\n"
         "# about display\ndisplay:\n  skin: \"light\"     # inline\nmcp_servers:\n  mine:\n"
-        "    command: node\n# after servers, as it was\ntimezone: Asia/Tokyo\n# bottom\n")
+        "    command: node\n# after servers, as it was\nmax_live_sessions: 8\n# bottom\n")
 
 
 def test_a_config_with_windows_line_endings_keeps_them(box):

@@ -9,8 +9,8 @@ when the sandbox was switched on, and compares the home with it before the profi
   link target) of every watched file and folder, each cron job's payload, and byte copies of the small files that
   run (``handback/base/``). Text the agent reads (skills, memories, SOUL.md) is hashed only; env files and
   credential stores are hashed, never copied.
-* ``diff``           one row per change that runs here or moves a key (Tier 1); counts and a list for the text
-  the agent reads (Tier 2); a count for every other setting.
+* ``diff``           one row per changed file that runs here and per changed setting (Tier 1); counts and a list
+  for the text the agent reads (Tier 2); a count for the other settings (``OTHER_SETTINGS``, ``OTHER_TEXTS``).
 * ``revert``         puts the baseline's value or file back for the rows named and moves the sandbox's version
   to ``handback/held/<time>/``. In config.yaml only the row's key changes (Hermes's round-trip YAML writer:
   comments, order and quoting stay; see ``_edit_config``). ``keep`` records an answer; ``close`` ends the baseline.
@@ -65,8 +65,10 @@ STATE_DIRNAME = "handback"
 VERSION = 1
 
 # -- what is watched --------------------------------------------------------------------------------
-# Tier 1 config.yaml keys: what runs on this computer or decides where a key goes. One row per entry below
-# the first kind (an MCP server, a hook event, a secret source), one row for each key of the second kind.
+# config.yaml: every setting that differs from the baseline is a row, and a revert puts it back. A top-level key
+# that is a mapping gives one row per child (an MCP server, a provider, ``browser.executable_path``), any other
+# key one row. The exception is OTHER_SETTINGS below. PER_ENTRY and WHOLE name the rows that have a label of their
+# own; the keys of WHOLE are one row even when their value is a mapping.
 PER_ENTRY = {"secrets": "Secret source", "mcp_servers": "MCP server", "hooks": "Shell hook",
              "quick_commands": "Quick command", "approvals": "Approvals", "plugins": "Plugins",
              "security": "Security setting", "terminal": "Terminal setting", "network": "Network setting",
@@ -75,11 +77,41 @@ WHOLE = {"hooks_auto_accept": "Shell hooks", "command_allowlist": "Approved comm
          "fallback_model": "Fallback model", "fallback_providers": "Fallback providers",
          "custom_providers": "Custom providers", "telemetry.shared_metrics": "Usage data"}
 TIER1_KEYS = (*PER_ENTRY, *WHOLE)
-# Model entries count by these fields only (the endpoint and which key goes to it); the rest of an entry (the
-# model's name, its limits) is an ordinary setting. A revert still restores the whole entry.
+# The other settings, which differ after a session without a row: a top-level key with everything below it, or one
+# dotted path. A key is here only when its numbers and switches cannot change what this computer runs or where a
+# credential is sent: how Hermes looks, its limits and its housekeeping. The first line holds what Hermes writes
+# by itself, without the user asking. Every other key, a key Hermes adds later included, is a row.
+OTHER_SETTINGS = frozenset({
+    "_config_version", "onboarding", "monitoring.install_id",
+    "display", "sessions", "session", "streaming", "compression", "logging", "human_delay", "tool_output",
+    "paste_collapse_threshold", "paste_collapse_threshold_fallback", "paste_collapse_char_threshold",
+    "file_read_max_chars", "context_file_max_chars", "context_file_read_timeout", "goals", "loops", "checkpoints",
+    "worktrees", "database", "runtime", "max_concurrent_sessions", "max_live_sessions", "doctor", "bot_mode",
+    "prompt_caching", "vision"})
+# Under the other settings a number, a switch or an empty value differs without a row. A text does so only at a
+# path named here: a text that Hermes checks against its own choices, or that it only shows (a theme, a mode, a
+# label). A text at any other path under those keys is a row, because nothing here knows what reads it: it can be
+# a command, a module, a host or a file. So is a text that Hermes looks up as a name in a module or hands to a
+# formatter, such as ``logging.level`` and ``display.timestamp_format``: no check stands between such a word and
+# code that can raise. A text at a named path is a row too when it is no plain word (``_plain_text``). A list is
+# judged by its items, a mapping by its values (``_counted_texts``).
+OTHER_TEXTS = frozenset({
+    "monitoring.install_id", "onboarding.profile_build", "database.journal_mode", "compression.tail_mode",
+    "compression.codex_app_server_auto", "display.resume_display", "display.busy_input_mode", "display.interface",
+    "display.cli_layout", "display.memory_notifications", "display.background_process_notifications",
+    "display.final_response_markdown", "display.inline_images", "display.focus_saved_tool_progress", "display.skin",
+    "display.language", "display.tui_status_indicator", "display.tool_progress_grouping", "display.reasoning_style",
+    "display.runtime_footer.fields", "display.pet.render_mode", "human_delay.mode", "streaming.transport",
+    "streaming.cursor", "sessions.fts_optimize_notice"})
+_TEXT_MAX = 64                  # characters a text at a path of OTHER_TEXTS has at most to pass as a plain word
+_TEXT_DEPTH = 16                # how deep the texts under one of the other settings are looked for one by one
+# Model entries are compared whole, like every entry. These names only word the row (endpoint, key, provider).
 MODEL_KEYS = frozenset({"model", "fallback_model", "fallback_providers", "custom_providers", "providers", "auxiliary"})
-MODEL_FIELDS = ("provider", "base_url", "key_env", "api_key_env", "api_key")
-_KEY_FIELDS = ("key_env", "api_key_env", "api_key")
+_ENDPOINT_FIELDS = ("base_url", "url", "api")
+_KEY_FIELDS = ("key_env", "api_key_env", "api_key", "key_cmd")
+# A saved answer or kept record names the state of a model entry in one of two forms: by the whole entry, or by
+# these fields of it alone (``_route_state``). Either form holds for the entry it names.
+_MODEL_ROUTE_FIELDS = ("provider", "base_url", "key_env", "api_key_env", "api_key")
 # A cron job's payload: what it runs, with what, when, and where its output goes. Run state is not payload.
 JOB_FIELDS = ("prompt", "script", "skills", "no_agent", "schedule", "workdir", "enabled_toolsets", "model",
               "provider", "base_url", "monitor_script", "monitor_url", "interpreter", "context_from", "deliver",
@@ -464,64 +496,85 @@ def _dig(doc: Any, path: Iterable[str]) -> Any:
     return doc
 
 
-def _project(value: Any) -> Any:
-    """The part of a model entry (or of a list of them) that decides where a key goes."""
-    if isinstance(value, dict):
-        return {f: value[f] for f in MODEL_FIELDS if value.get(f) not in (None, "")}
-    if isinstance(value, list):
-        return [p for p in (_project(v) for v in value) if p]
-    return {}
+def _route_state(path: tuple, value: Any) -> str:
+    """The state of the setting at *path* in the form that names a model entry by ``_MODEL_ROUTE_FIELDS`` alone.
+    An answer in ``answers.json`` or an item of ``kept.json`` in that form holds for the entry it names."""
+    def project(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {f: item[f] for f in _MODEL_ROUTE_FIELDS if item.get(f) not in (None, "")}
+        return [p for p in (project(v) for v in item) if p] if isinstance(item, list) else {}
+
+    return _digest((project(value) or None) if path and path[0] in MODEL_KEYS else value)
 
 
-def _remainder(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {k: _remainder(v) if isinstance(v, (dict, list)) else v for k, v in value.items() if k not in MODEL_FIELDS}
-    return [_remainder(v) for v in value] if isinstance(value, list) else value
+def _plain_text(text: str) -> bool:
+    """Whether *text* is a plain word: short, and without a slash, a backslash or a colon (no path, no address)."""
+    return len(text) <= _TEXT_MAX and not any(mark in text for mark in "/\\:")
+
+
+def _other_key(path: tuple) -> bool:
+    """Whether *path* lies under one of the other settings (``OTHER_SETTINGS``)."""
+    return path[0] in OTHER_SETTINGS or ".".join(path[:2]) in OTHER_SETTINGS
+
+
+def _counted_texts(path: tuple, value: Any) -> Optional[list]:
+    """What of a value under one of the other settings is compared: ``[dotted path, text]`` for every text in it
+    that is at no path of ``OTHER_TEXTS`` or is no plain word there, sorted by path; None when it holds none.
+    Numbers, switches and empty values are left out, so they differ without a row. A key of a mapping that is no
+    plain word counts as a text of that mapping. ``_TEXT_DEPTH`` levels down a list or a mapping counts whole.
+    The value is walked with a list of what is left to look at, so the cost is its size, whatever it holds."""
+    found, stack = [], [(path, value, 0)]
+    while stack:
+        parts, item, depth = stack.pop()
+        name = ".".join(parts)
+        if isinstance(item, str):
+            if name not in OTHER_TEXTS or not _plain_text(item):
+                found.append([name, item])
+        elif isinstance(item, (dict, list)) and depth >= _TEXT_DEPTH:
+            found.append([name, item])
+        elif isinstance(item, dict):
+            for key, below in item.items():
+                if not _plain_text(str(key)):
+                    found.append([name, str(key)])
+                stack.append(((*parts, str(key)), below, depth + 1))
+        elif isinstance(item, list):
+            stack.extend((parts, below, depth + 1) for below in item)
+    found.sort(key=lambda pair: pair[0])
+    return found or None
 
 
 def _tier1(doc: dict) -> dict:
-    """``path -> value`` for every Tier 1 entry of a parsed config (model entries by their key fields)."""
+    """``path -> value`` for every setting of a parsed config that is a row when it differs. Entries are compared
+    whole, so every field of a provider or a server counts. Of a value under the other settings only the texts
+    that count are compared (``_counted_texts``)."""
     out = {}
-    for key in PER_ENTRY:
-        value = doc.get(key)
-        if isinstance(value, dict):
+    for key, value in doc.items():
+        if isinstance(value, dict) and key not in WHOLE:
             for name, entry in value.items():
-                item = (_project(entry) or None) if key in MODEL_KEYS else entry
-                if item is not None:
-                    out[(key, name)] = item
-        elif value is not None:
-            out[(key,)] = value
-    for key in WHOLE:
-        path = tuple(key.split("."))
-        value = _dig(doc, path)
-        if key in MODEL_KEYS:
-            value = _project(value) or None
-        if value is not None:
-            out[path] = value
+                path = (key, str(name))
+                entry = _counted_texts(path, entry) if _other_key(path) else entry
+                if entry is not None:
+                    out[path] = entry
+        else:
+            value = _counted_texts((key,), value) if _other_key((key,)) else value
+            if value is not None:
+                out[(key,)] = value
     return out
 
 
 def _other_settings(base: dict, now: dict, rows: set) -> list[str]:
-    """Paths of the settings that differ and are no row: everything outside Tier 1, and the rest of a model
-    entry whose endpoint and key did not change."""
+    """Paths of the settings that differ and are no row: numbers, switches and named texts under
+    ``OTHER_SETTINGS``."""
     paths = []
     for key in sorted(set(base) | set(now)):
         b, n = base.get(key), now.get(key)
-        both_maps = (isinstance(b, dict) or isinstance(n, dict)) and all(v is None or isinstance(v, dict) for v in (b, n))
-        if key in MODEL_KEYS and key in PER_ENTRY and both_maps:
-            b, n = b or {}, n or {}
-            paths += [f"{key}.{name}" for name in sorted(set(b) | set(n))
-                      if (key, name) not in rows and _remainder(b.get(name)) != _remainder(n.get(name))]
-        elif key in MODEL_KEYS:
-            if (key,) not in rows and _remainder(b) != _remainder(n):
-                paths.append(key)
-        elif key in PER_ENTRY or key in WHOLE:
+        if b == n or (key,) in rows:
             continue
-        elif both_maps:
+        if key not in WHOLE and all(v is None or isinstance(v, dict) for v in (b, n)):
             b, n = b or {}, n or {}
             paths += [f"{key}.{child}" for child in sorted(set(b) | set(n))
-                      if b.get(child) != n.get(child) and f"{key}.{child}" not in WHOLE]
-        elif b != n:
+                      if b.get(child) != n.get(child) and (key, child) not in rows]
+        else:
             paths.append(key)
     return paths
 
@@ -569,7 +622,7 @@ def _config_detail(path: tuple, kind: str, base: Any, now: Any) -> str:
     if path[0] in MODEL_KEYS:
         if kind == "config_added":
             return word
-        if _fields(base, ("base_url",)) != _fields(now, ("base_url",)):
+        if _fields(base, _ENDPOINT_FIELDS) != _fields(now, _ENDPOINT_FIELDS):
             return "endpoint changed"
         if _fields(base, _KEY_FIELDS) != _fields(now, _KEY_FIELDS):
             return "key changed"
@@ -578,8 +631,9 @@ def _config_detail(path: tuple, kind: str, base: Any, now: Any) -> str:
         return "turned on" if now else "turned off"
     before = base if isinstance(base, list) else []
     if isinstance(now, list) and all(isinstance(v, (str, int, float)) for v in (*now, *before)):
-        added = ", ".join(str(v) for v in now if v not in before)
-        gone = ", ".join(str(v) for v in before if v not in now)
+        had, has = set(before), set(now)  # sets: the cost stays in step with the length of a long list
+        added = ", ".join(str(v) for v in now if v not in had)
+        gone = ", ".join(str(v) for v in before if v not in has)
         parts = [p for p in (f"added {_short(added)}" if added else "", f"removed {_short(gone)}" if gone else "") if p]
         return "; ".join(parts) or word
     runs = _runs(now)
@@ -611,8 +665,27 @@ def _edit_config(current: bytes, base: bytes, paths: list[tuple], base_doc: Opti
     def load(data: bytes):
         return hermes_yaml.roundtrip_yaml().load(data.decode("utf-8-sig").replace("\r\n", "\n")) if data.strip() else None
 
+    names: dict = {}  # id of a mapping -> (the mapping, its keys by their text): a lookup costs the same in a long file
+
     def find(node, name):
-        return next((k for k in node if str(k) == str(name)), None) if isinstance(node, dict) else None
+        if not isinstance(node, dict):
+            return None
+        if id(node) not in names:
+            known: dict = {}
+            for key in node:
+                known.setdefault(str(key), key)
+            names[id(node)] = (node, known)
+        return names[id(node)][1].get(str(name))
+
+    def put(node, key, value) -> None:
+        node[key] = value
+        if id(node) in names:
+            names[id(node)][1].setdefault(str(key), key)
+
+    def drop(node, key) -> None:
+        del node[key]
+        if id(node) in names:
+            names[id(node)][1].pop(str(key), None)
 
     doc, source = load(current), load(base)
     if not isinstance(doc, CommentedMap):
@@ -632,21 +705,21 @@ def _edit_config(current: bytes, base: bytes, paths: list[tuple], base_doc: Opti
                     node = None  # nothing to remove below a section that is not there
                     break
                 key = part if key is None else key
-                node[key] = CommentedMap()
+                put(node, key, CommentedMap())
             parents.append((node, key))
             node = node[key]
         if node is None:
             continue
         key = find(node, path[-1])
         if theirs is not None:
-            node[path[-1] if key is None else key] = theirs
+            put(node, path[-1] if key is None else key, theirs)
             continue
         if key is not None:
-            del node[key]
+            drop(node, key)
         for parent, name in reversed(parents):  # a section this emptied that the other file does not have
             if len(parent[name]) or _dig(base_doc or {}, [str(path[0])]) is not None:
                 break
-            del parent[name]
+            drop(parent, name)
     out = io.StringIO()
     hermes_yaml.roundtrip_yaml().dump(doc, out)
     text = out.getvalue()
@@ -1048,7 +1121,8 @@ class _Diff:
         answers = _read_json(self.store / "answers.json") or {}
         for row in self.rows:
             saved = answers.get(row["id"])
-            if isinstance(saved, dict) and saved.get("state") == row["state"] and not row["fixed"]:
+            if (isinstance(saved, dict) and saved.get("state") in (row["state"], row.get("_route"))
+                    and not row["fixed"]):
                 row["answer"] = saved.get("answer")
         self.rows.sort(key=lambda row: row["id"])
         self.items.sort(key=lambda row: row["id"])
@@ -1129,11 +1203,14 @@ class _Diff:
             changed = {path for path in set(old) | set(new) if old.get(path) != new.get(path)}
             for path in changed:
                 b, n = old.get(path), new.get(path)
-                kind = "config_added" if b is None else "config_removed" if n is None else "config_changed"
-                label = PER_ENTRY[path[0]] if path[0] in PER_ENTRY else WHOLE[".".join(path)]
+                # By the setting itself: under the other settings *b* and *n* hold only the texts that count.
+                was_set, is_set = _dig(self.base_doc, path) is not None, _dig(self.scan.config, path) is not None
+                kind = "config_added" if not was_set else "config_removed" if not is_set else "config_changed"
+                label = PER_ENTRY.get(path[0]) or WHOLE.get(".".join(path)) or "Setting"
                 shown = _dig(self.scan.config if n is not None else self.base_doc, path)
                 self.rows.append(_row("cfg:" + ".".join(map(str, path)), kind, label, _config_name(path, shown),
                                       _config_detail(path, kind, b, n), state=n, path=path,
+                                      route=_route_state(path, n),
                                       can_restore=bool(was.get("copy")) or state == "absent"))
             self.other = _other_settings(self.base_doc, self.scan.config, changed)
             return
@@ -1634,10 +1711,16 @@ def revert_within(seconds: float, home, state_dir, row_ids="all", *, from_copies
 # -- what the user kept ------------------------------------------------------------------------------
 
 def _state_now(where: _Home, item: dict, doc: Optional[dict], jobs: Optional[list]) -> Optional[str]:
-    """The state digest of what a kept *item* names, as the home has it now (None when it cannot be told)."""
+    """The state digest of what a kept *item* names, as the home has it now (None when it cannot be told). A
+    kept setting whose state is in the form that names a model entry by a few fields (``_route_state``) answers
+    with that item's own state while the entry has that state in that form."""
     kind = str(item.get("kind") or "")
     if kind.startswith("config_") and kind != "config_file":
-        return None if doc is None else _digest(_tier1(doc).get(tuple(item.get("path") or ())))
+        if doc is None:
+            return None
+        path = tuple(item.get("path") or ())
+        value = _tier1(doc).get(path)
+        return item["state"] if item.get("state") == _route_state(path, value) else _digest(value)
     if kind.startswith("cron_") and kind != "cron_file":
         found = next((job for n, job in enumerate(jobs or []) if _job_id(job, n) == item.get("job")), None)
         return _digest(_payload(found)) if found is not None else ""

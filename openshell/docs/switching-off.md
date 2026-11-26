@@ -53,12 +53,33 @@ hermes -p sbtest sandbox handback
 
 | What changed | How the list shows it | What Revert does |
 |---|---|---|
-| Cron jobs, scripts, MCP servers, shell hooks, secret sources, model endpoints | One row each | Puts each back as it was at switch-on |
+| Cron jobs, scripts, hook files | One row each | Puts each back as it was at switch-on |
+| A setting in `config.yaml`: an MCP server, a shell hook, a secret source, a provider, the model, the browser, delegation and every other key that is not in the list below | One row each | Puts each back as it was at switch-on |
+| The settings in the list below | A count ("Also changed: N other settings") | Nothing. They are counted but not reverted. |
 | Skills, memories and `SOUL.md` | A count ("Also changed: ...") | Nothing. They are counted but not reverted. |
 | Env files and `auth.json` | Under "Always reverted" | They are always put back from the launcher's copies, whatever you answer |
 
-A model or an MCP server you changed yourself in the app while the sandbox was on is listed too,
-because the sandboxed backend wrote it. Keep it.
+A setting you changed yourself in the app while the sandbox was on is listed too, because the
+sandboxed backend wrote it. Keep it.
+
+The settings under these keys can differ without a row. They change how Hermes looks, its
+limits and its housekeeping:
+
+- `display`, `streaming`, `human_delay`, `logging`, `tool_output` and the three
+  `paste_collapse_*` keys;
+- `sessions`, `session`, `compression`, `checkpoints`, `worktrees`, `database`, `runtime`,
+  `prompt_caching`, `vision`, `goals`, `loops`, `doctor` and `bot_mode`;
+- `file_read_max_chars`, `context_file_max_chars`, `context_file_read_timeout`,
+  `max_concurrent_sessions` and `max_live_sessions`;
+- `_config_version`, `onboarding` and `monitoring.install_id`, which Hermes writes by itself.
+
+Under these keys a number or an on/off value differs without a row.
+A text does so only when Hermes checks it against its own choices or only shows it: a theme, a
+language, a display mode.
+Any other text under these keys is a row, the log level among them.
+
+A theme or a mode that holds a slash, a backslash or a colon, or is longer than 64 characters, is
+a row too.
 
 Only what the sandbox can write is compared:
 

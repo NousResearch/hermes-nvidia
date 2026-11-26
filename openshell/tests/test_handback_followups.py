@@ -505,11 +505,11 @@ def test_a_revert_that_leaves_no_setting_different_gives_the_saved_file_back_byt
 
 def test_a_revert_beside_another_changed_setting_changes_only_its_keys(box):  # noqa: F811
     home, state = taken(box)
-    put(home / "config.yaml", TH.CONFIG + b"\ntimezone: UTC\nhooks_auto_accept: true\n")
+    put(home / "config.yaml", TH.CONFIG + b"\nmax_live_sessions: 4\nhooks_auto_accept: true\n")
     H.revert(home, state, "all")
     after = (home / "config.yaml").read_bytes()
-    assert after != TH.CONFIG and b"timezone: UTC" in after and b"hooks_auto_accept" not in after  # the setting stays
-    assert H.diff(home, state)["rows"] == [] and H.diff(home, state)["other_settings"]["paths"] == ["timezone"]
+    assert after != TH.CONFIG and b"max_live_sessions: 4" in after and b"hooks_auto_accept" not in after  # it stays
+    assert H.diff(home, state)["rows"] == [] and H.diff(home, state)["other_settings"]["paths"] == ["max_live_sessions"]
 
 
 def test_a_saved_copy_that_is_not_the_recorded_file_is_never_written_back_whole(box):  # noqa: F811

@@ -550,7 +550,7 @@ def test_the_list_needs_the_outer_token(env, monkeypatch):  # noqa: F811
     view = _serve(routes, scenario)
     assert _ids(view) == TH.FOUR and view["unanswered"] == 7 and view["open"] is True
     assert view["tier2"]["counts"] == {"skills": 0, "memories": 0, "context": 0}
-    assert view["other_settings"]["paths"] == ["display.skin", "mcp_servers_note"]
+    assert view["other_settings"]["paths"] == ["display.skin", "max_live_sessions"]
 
 
 def test_the_list_is_kept_for_a_few_seconds_and_dropped_by_an_answer(env, monkeypatch):  # noqa: F811
@@ -665,7 +665,7 @@ def test_a_key_write_takes_no_setting_into_the_baseline(layout, writes, monkeypa
     status, _, _ = asyncio.run(routes.match("PUT", "/api/env")(
         SimpleNamespace(authenticated=True), json.dumps({"key": "NEW_API_KEY", "value": "sk-new"}).encode()))
     assert status == 200
-    assert _ids(H.diff(layout.home, layout.state_dir)) == ["cfg:hooks_auto_accept", "cfg:model"]
+    assert _ids(H.diff(layout.home, layout.state_dir)) == ["cfg:hooks_auto_accept", "cfg:model", "cfg:model_note"]
 
 
 def test_a_hand_back_failure_never_fails_the_users_key_write(layout, writes, monkeypatch):  # noqa: F811
