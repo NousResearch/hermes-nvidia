@@ -59,7 +59,7 @@ def test_names_of_variables_and_plain_settings_are_not_keys():
     quiet = {"model": {"provider": "custom", "key_env": "MY_KEY", "api_key_env": "OTHER", "base_url": "https://x.example.com",
                        "api_key": "", "default": "m"},
              "mcp_servers": {"s": {"auth": "oauth", "env": {"HOME_DIR": "/x"}, "headers": {"Accept": "a"}}},
-             "secrets": {"bitwarden": {"enabled": True}}, "token": "not in a section that is read"}
+             "secrets": {"bitwarden": {"enabled": True}}, "token_count": "a name that only holds the word"}
     assert K.inline_keys(quiet) == [] and K.inline_keys(None) == [] and K.inline_keys([]) == []
 
 

@@ -364,10 +364,11 @@ def _move_keys(layout) -> None:
 
 def _with_move_hint(layout, message: str, exc, verb: str) -> str:
     """A switch refused for keys in config.yaml names the flag that moves them."""
-    if getattr(exc, "code", None) != "key_in_config":
+    moved = [key for key in getattr(exc, "keys", None) or [] if not key.get("by_hand")]  # the flag moves these
+    if getattr(exc, "code", None) != "key_in_config" or not moved:
         return message
     profile = "" if layout.name == "default" else f" -p {layout.name}"
-    what = "it" if len(getattr(exc, "keys", None) or []) == 1 else "them"
+    what = "it" if len(moved) == 1 else "them"
     return f"{message} Run `hermes{profile} sandbox {verb} --move-keys` to move {what} and go on."
 
 

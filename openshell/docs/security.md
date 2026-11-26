@@ -68,8 +68,10 @@ So inside a Windows sandbox the plugin lists `127.0.0.1`, `localhost` and `::1` 
   grant. See [Provider sign-ins](sign-ins.md#what-the-sandbox-gets).
 - Credential files are hidden with MXC denied paths on Windows and with read-only mounts on Linux.
   See [How it works](how-it-works.md#how-credential-files-are-hidden).
-- A key written in `config.yaml`, which the sandbox reads, keeps the switch off until it is moved
-  to `.env`.
+- A key written anywhere in `config.yaml`, which the sandbox reads, keeps the switch off until it
+  is moved to `.env`. So does a key in a copy of `config.yaml` in the profile folder.
+- Copies of the keys file and of the sign-in file at the top of the profile folder are hidden
+  like the files themselves, whatever made them: `.env.save`, `.env.bak`, `.env~`, `auth.json.bak`.
 
 ## What is verified at install
 

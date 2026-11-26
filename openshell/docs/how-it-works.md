@@ -130,6 +130,11 @@ What differs for programs that run inside is in
 ## How credential files are hidden
 
 The profile's credential files stay hidden from the sandbox, whether or not they exist yet.
+
+Copies of them at the top of the profile folder are hidden too, by their names: what Hermes's own
+writers leave (`.env.bak-<stamp>`), and what an editor or a person leaves beside the keys file or
+the sign-in file (`.env.save`, `.env.swp`, `.env~`, `auth.json.bak`).
+
 The sign-in files `auth.json` and `.anthropic_oauth.json` are hidden the same way, unless the
 profile is signed in to a provider the sandbox can use. See [Provider sign-ins](sign-ins.md).
 
@@ -163,8 +168,11 @@ What a sandbox may not read is fixed when it starts.
 The launcher therefore looks at the top of the profile folder about once a second.
 
 When a copy of a credential file appears there while the sandbox is on (for example
-`.env.bak-<stamp>`), the launcher restarts the sandbox, so that the sandbox cannot read the copy.
+`.env.bak-<stamp>`, or `.env.save` and `.env.swp` from an editor), the launcher restarts the
+sandbox, so that the sandbox cannot read the copy.
+
 The page then says "Restarting the sandbox to hide" and the file's name.
+Until that restart is done, the sandbox can read the copy.
 
 ## Host-only state
 

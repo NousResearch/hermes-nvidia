@@ -255,6 +255,26 @@ See [Sign-in renewal](sign-in-renewal.md#how-often-the-launcher-asks-a-provider)
 
 ## Credential files
 
+### Speech with a key of its own
+
+The launcher hands the sandbox a key only for the addresses of the profile's models and of the
+tools it knows. A speech key is not among them: `tts.openai.api_key`, `stt.openai.api_key` or
+`voice.live.api_key`, once moved to `.env`. Text to speech and speech to text that need such a key
+do not work inside the sandbox. Use them with the sandbox off.
+
+### A copy of a credential file that is not found
+
+- A copy made while the sandbox is on is found within about a second, and the sandbox restarts.
+  Until that restart is done, the sandbox can read the copy.
+- Only the top of the profile folder is looked at. A copy in a folder below it is not found.
+- A copy is known by its name: the file's name with something after it (`.env.save`,
+  `auth.json.bak`) or an editor's own name for it (`.env.swp`). A copy under another name, such as
+  `auth - Copy.json` or `my-keys.txt`, is not found.
+- In `config.yaml`, a secret under a name that does not say so and without a known shape is not
+  found, for example a plain string in an MCP server's `env`.
+- Under a name such as `key` or `signing_key`, a secret is found only when it looks like one. A pass
+  phrase made of words is not found there.
+
 ### Linux: a credential file replaced by hand
 
 A program that renames a new file over a credential file at the top of the profile folder puts a

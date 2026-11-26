@@ -120,11 +120,34 @@ These do not keep the switch off:
 The sandbox reads `config.yaml`, so a key written there is a key the sandbox holds.
 The switch names the key and stays off.
 
+The whole file is read.
+
+- A value counts when its name can only be a credential's (`api_key`, `token`, `password`, `secret`,
+  or a name that ends in one of them), and under a key-like name (`key`, `signing_key`) when it
+  looks like a credential: 16 or more characters with a long run of mixed letters and digits, and
+  not a file path.
+- A value also counts by its shape, whatever its name: a URL with a password or a token in it, a
+  webhook URL, a command with a `Bearer` value or with `--api-key`.
+
 - On the Sandbox page, the bar above the tabs offers **Move to .env**.
 - In a terminal, `hermes -p <profile> sandbox on --move-keys` moves the key and turns the sandbox
   on.
 
 The move puts the key in `.env` and leaves `${NAME}` in its place in `config.yaml`.
+It moves the keys of the profile's models and of its MCP servers.
+
+A key anywhere else is moved by hand, for example `tts.openai.api_key`, a messaging platform's
+token or a dashboard password. The switch's message names the key and a variable for it:
+
+1. Put the value in the profile's `.env` under that name.
+2. Write `${NAME}` in its place in `config.yaml`.
+
+A copy of `config.yaml` in the profile folder counts too, for example `config.yaml.bak` or
+`config.yaml~`: the sandbox reads it like `config.yaml`. The switch names the file. Delete it or
+move it out of the profile folder.
+
+A copy that can't be read as a config file keeps the switch off too, for example an editor's swap
+file or a file larger than 256 KB.
 
 - After the move the key is in `.env` and in no other file. No copy of either file is kept.
 - A move that was stopped between the two files leaves the key in both. The switch stays refused,

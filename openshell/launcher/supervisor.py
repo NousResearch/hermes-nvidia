@@ -794,11 +794,12 @@ class Supervisor:
         """One look, at most every ``PRIVATE_LOOK`` seconds, at the top of the profile folder for an entry that
         Hermes calls a credential store or a copy of one and that this sandbox's start did not list
         (``layout.new_private_entries``): a copy of the keys file made while the sandbox is on, by Hermes's own
-        config migration (``.env.bak-<stamp>``), by a person or by a tool on this computer. What a sandbox may
-        not read is fixed when it starts, so the sandbox is restarted: the new start lists the entry. With the
-        cards wired (``on_private``) the restart is theirs and replies in flight continue after it; else a plain
-        restart. More than ``PRIVATE_LIMIT`` such restarts within ``GUARD_WINDOW`` seconds stop the sandbox
-        with the reason (the sandbox writes this folder too). Returns the names found. Never raises."""
+        config migration (``.env.bak-<stamp>``), by an editor (``.env.save``, ``.env.swp``), by a person or by a
+        tool on this computer. What a sandbox may not read is fixed when it starts, so the sandbox is restarted:
+        the new start lists the entry. With the cards wired (``on_private``) the restart is theirs and replies in
+        flight continue after it; else a plain restart. More than ``PRIVATE_LIMIT`` such restarts within
+        ``GUARD_WINDOW`` seconds stop the sandbox with the reason (the sandbox writes this folder too). Returns
+        the names found. Never raises."""
         now = time.monotonic()
         if (self._listed_private is None or self.state != "running" or self._lock.locked()
                 or now - self._private_looked < PRIVATE_LOOK):
@@ -812,7 +813,8 @@ class Supervisor:
         if not new or self.state != "running":
             return []
         names = ", ".join(new)
-        self._listed_private = self._listed_private | {name.casefold() for name in new}  # asked for once
+        found = listed_names(self.layout.home, [self.layout.home / name for name in new])
+        self._listed_private = self._listed_private | found  # asked for once
         self._private_restarts = [t for t in self._private_restarts if now - t < GUARD_WINDOW] + [now]
         try:
             if len(self._private_restarts) > PRIVATE_LIMIT:

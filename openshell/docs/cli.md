@@ -48,7 +48,7 @@ elsewhere.
 |---|---|
 | `--revert` | Put back what the last sandbox session changed among the settings and files that run on this computer |
 | `--keep` | Keep those changes |
-| `--move-keys` | First move keys written in `config.yaml` to `.env` |
+| `--move-keys` | First move the keys of models and MCP servers written in `config.yaml` to `.env` |
 
 | Output field | Meaning |
 |---|---|
@@ -192,7 +192,7 @@ Point a client at `http://127.0.0.1:N` with the token stored in the file `serve`
 | `--rotate-token` | Mint a new outer token |
 | `--service` | Run as the profile's login service. It exits at once if the switch is off. It runs a sandbox only for a profile that is marked or is being switched on. |
 | `--revert`, `--keep` | Answer the review of the last sandbox session |
-| `--move-keys` | First move keys written in `config.yaml` to `.env` |
+| `--move-keys` | First move the keys of models and MCP servers written in `config.yaml` to `.env` |
 
 - Flags marked "saved" in `serve --help` are stored in the profile's host-only settings once the
   sandbox driver accepts them. That covers every flag above except `--rotate-token`, `--service`,

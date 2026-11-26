@@ -53,7 +53,8 @@ def refusal(layout, rows: Optional[list] = None, *, seen: Optional[list] = None)
 
     ``unreadable``: the profile's ``config.yaml``, an env file or a sign-in file is there and cannot be read;
     ``detail`` is the sentence that names it. ``key_in_config``: keys are written in ``config.yaml`` (``keys``
-    lists them, as ``inline_keys`` gives them, and ``detail`` names their places). ``model_unavailable`` and
+    lists them, as ``inline_keys`` gives them, and ``detail`` names their places). ``key_in_config_copy``: a
+    copy of ``config.yaml`` in the profile folder holds a key; ``detail`` names the file. ``model_unavailable`` and
     ``model_needs_sign_in``: the main model's provider cannot work in the sandbox, or needs a sign-in first;
     ``detail`` ends with why (the provider's own reason, or that row's sentence). The first sentence of
     ``detail`` is the one the page shows for the same thing. *seen* receives the rows that were read."""
@@ -63,6 +64,9 @@ def refusal(layout, rows: Optional[list] = None, *, seen: Optional[list] = None)
             reason = settings_view._BLOCKS["key_in_config" if len(keys) == 1 else "keys_in_config"]
             return {"code": "key_in_config", "keys": keys,
                     "detail": f"{reason} {'Key' if len(keys) == 1 else 'Keys'}: {config_keys.describe(keys)}."}
+        copies = config_keys.keys_in_copies(layout.home)
+        if copies:  # a copy of config.yaml beside it: the sandbox reads that file too
+            return {"code": "key_in_config_copy", "keys": [], "detail": config_keys.describe_copies(copies)}
         rows = host_rows(layout) if rows is None else rows
     except settings_view.Unreadable as exc:
         return {"code": "unreadable", "keys": [], "detail": str(exc)}

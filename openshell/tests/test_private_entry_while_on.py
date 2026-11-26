@@ -82,15 +82,16 @@ def test_what_the_start_listed_is_not_found_again_present_or_absent(tmp_path):
     assert L.new_private_entries(home, listed) == []
 
 
-def test_names_are_compared_without_letter_case(tmp_path):
-    """Hermes judges these names case-folded, and so does a volume that ignores case."""
+def test_which_names_are_private_is_judged_without_letter_case(tmp_path):
+    """Hermes judges these names case-folded. Whether a name was listed is asked as the file system compares
+    names."""
     home = _home(tmp_path)
     assert L.listed_names(home, [home / ".ENV.Bak-X", home / "cache" / "below.json", tmp_path / "elsewhere"]) == {
-        ".env.bak-x"}
+        os.path.normcase(".ENV.Bak-X")}
     listed = _listed(home)
     (home / ".ENV.BAK9").write_text("x", encoding="utf-8")
     assert L.new_private_entries(home, listed) == [".ENV.BAK9"]
-    assert L.new_private_entries(home, listed | {".env.bak9"}) == []
+    assert L.new_private_entries(home, listed | L.listed_names(home, [home / ".ENV.BAK9"])) == []
 
 
 def test_a_home_that_cannot_be_listed_gives_nothing(tmp_path):
@@ -175,7 +176,7 @@ def test_the_real_launch_request_records_what_it_listed(tmp_path):
     assert sup._listed_private is None  # nothing is looked for before a start listed the home
     sup._inner_port, sup._inner_token = 1, "inner"
     sup._launch_request({})
-    assert {".env", "auth.json", STAMPED.casefold()} <= sup._listed_private
+    assert {".env", "auth.json", os.path.normcase(STAMPED)} <= sup._listed_private
     assert os.path.normcase(str(home / STAMPED)) in {os.path.normcase(str(p)) for p in sup._grants.denied}
 
 

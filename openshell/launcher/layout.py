@@ -14,6 +14,7 @@ import re
 import shutil
 import stat
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -80,6 +81,20 @@ _NAME_SURROGATE = 0x20000000
 # the launcher hands the CLI for a gateway the settings name (openshell_driver.py ``config_from_spec``), and the
 # roaming application data folder is the one the CLI takes on Windows when nothing names another.
 _OPENSHELL_CONFIG_HOMES = (".config", "AppData/Roaming")
+
+# The files at the top of a profile folder that hold keys or sign-ins by themselves, and the names a copy of one
+# gets from a writer, an editor or a person: the name with something after a dot, underscore, tilde, hyphen, hash,
+# bracket or space (``.env.save``, ``.env_k3j2.tmp``, ``.env~``, ``.env (copy)``, ``auth.json.bak``), or wrapped
+# the way an editor names its own file (``..env.swp``, ``#.env#``, ``.#.env``, ``~.env``). Matched case-folded.
+# ``.envoy`` and ``.environment`` are other files. ``.env`` stands last in the pattern: Hermes's install scan takes
+# ``env`` right before a bar for a command that prints the environment.
+_KEY_FILE = r"(?:auth\.json|gateway-connections?(?:-tokens)?\.json|(?:\.op)?\.env)"
+_KEY_FILE_COPY = re.compile(rf"{_KEY_FILE}[._~\-#( ].*|\.{_KEY_FILE}\.sw.|#{_KEY_FILE}#|\.#{_KEY_FILE}|~{_KEY_FILE}"
+                            r"|\.keys-.*\.tmp")
+# The file a writer fills before it renames it over the keys file (Hermes: ``.env_<random>.tmp``; the move of keys
+# out of config.yaml: ``.keys-<random>.tmp``). One younger than TEMP_GRACE seconds belongs to a write under way.
+_WRITERS_TEMP = re.compile(r"\.env_.*\.tmp|\.keys-.*\.tmp")
+TEMP_GRACE = 5.0
 
 
 def sandbox_readonly_dirs() -> tuple[str, ...]:
@@ -292,18 +307,32 @@ def credential_paths(home: Path) -> list[Path]:
     listed by their own paths; the Windows driver refuses to start while one of them exists.
     Absent paths are listed too: the sandbox cannot create one by opening it (a rename onto the path still
     works on MXC 1.0.1, see NVIDIA/OpenShell#5033), and every deny's parent is the home itself or a folder MXC sees."""
-    from hermes_cli.profiles import PROFILE_CREDENTIAL_PATHS, profile_path_is_private
+    from hermes_cli.profiles import PROFILE_CREDENTIAL_PATHS
 
     paths = {_hidden_path(home, rel) for rel in (*PROFILE_CREDENTIAL_PATHS, *_EXTRA_NESTED_STORES)}
     if home.is_dir():
-        paths.update(entry for entry in home.iterdir() if profile_path_is_private((entry.name,)))
+        paths.update(entry for entry in home.iterdir() if is_private_name(entry.name))
     return sorted(paths)
 
 
+def is_private_name(name: str) -> bool:
+    """Whether an entry called *name* at the top of a profile folder is a credential store or a copy of one:
+    by Hermes's own rule, or by the names a copy of a key file gets (``_KEY_FILE_COPY``), without regard to
+    case. A lock file holds no key. A copy of ``config.yaml`` that Hermes did not make is not private: the
+    sandbox reads it like ``config.yaml``, and the switch looks through it for keys (config_keys.py)."""
+    from hermes_cli.profiles import profile_path_is_private
+
+    if profile_path_is_private((name,)):
+        return True
+    folded = name.casefold()
+    return bool(_KEY_FILE_COPY.fullmatch(folded)) and not folded.endswith(".lock")
+
+
 def listed_names(home: Path, paths) -> frozenset:
-    """The names at the top of *home* among *paths* (what a start listed to hide, present or absent), case-folded
-    as Hermes judges them."""
-    return frozenset(Path(p).name.casefold() for p in paths if Path(p).parent == home)
+    """The names at the top of *home* among *paths* (what a start listed to hide, present or absent), each as
+    this system compares file names: exactly where two names that differ in case are two files, case-folded on
+    Windows, where they are one."""
+    return frozenset(os.path.normcase(Path(p).name) for p in paths if Path(p).parent == home)
 
 
 def new_private_entries(home: Path, listed) -> list[str]:
@@ -311,17 +340,30 @@ def new_private_entries(home: Path, listed) -> list[str]:
     in *listed* (``listed_names`` of the running sandbox's start), by their names on disk, sorted.
 
     ``credential_paths`` is taken when a sandbox starts, and what it finds by looking (a copy such as
-    ``.env.bak-<stamp>`` or ``auth.json.old``) can only be what was there then. A copy made while the sandbox
-    is on is found here; the stores Hermes knows by name are on every start's list, present or not. One listing
-    of the folder, nothing opened. [] when the folder cannot be listed."""
-    from hermes_cli.profiles import profile_path_is_private
-
+    ``.env.bak-<stamp>``, ``.env.save`` or ``auth.json.old``) can only be what was there then. A copy made while
+    the sandbox is on is found here; the stores Hermes knows by name are on every start's list, present or not.
+    A name is looked up in *listed* as the file system compares names, so ``.ENV`` beside a listed ``.env`` is
+    found where the two are two files. A writer's temp file is found once it has stayed for ``TEMP_GRACE``
+    seconds: one of a write under way is gone before a restart could hide it. One listing of the folder,
+    nothing opened. [] when the folder cannot be listed."""
     try:
         with os.scandir(home) as entries:
             names = [entry.name for entry in entries]
     except OSError:
         return []
-    return sorted(name for name in names if name.casefold() not in listed and profile_path_is_private((name,)))
+    new = sorted(name for name in names if os.path.normcase(name) not in listed and is_private_name(name))
+    return [name for name in new if not _write_under_way(Path(home) / name)]
+
+
+def _write_under_way(path: Path) -> bool:
+    """Whether *path* is a writer's temp file (``_WRITERS_TEMP``) that is younger than ``TEMP_GRACE`` seconds, or
+    gone again."""
+    if not _WRITERS_TEMP.fullmatch(path.name.casefold()):
+        return False
+    try:
+        return time.time() - os.stat(path).st_mtime < TEMP_GRACE
+    except OSError:
+        return True
 
 
 def hide_note(names, since: float) -> dict:
