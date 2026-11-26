@@ -221,6 +221,11 @@ def availability(layout, *, check_host: bool = True, refresh: bool = False) -> d
         return {"available": False, "reason": "Needs a newer version of Hermes."}
     if layout.name == "default":
         return {"available": False, "reason": "Not available for the default profile yet."}
+    from .openshell_install import RUNTIME_DIRNAME
+
+    if layout.name == RUNTIME_DIRNAME:
+        # Its state folder would be the one that holds the installed OpenShell runtime and its gateway.
+        return {"available": False, "reason": f"Not available for a profile named {layout.name}."}
     if not check_host:
         return {"available": True, "reason": None}
     host = host_check(layout, refresh=refresh)

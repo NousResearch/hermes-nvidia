@@ -79,6 +79,11 @@ All sandboxed profiles of a Hermes installation share one private OpenShell gate
 - It runs as a login service.
 - It is removed when the last profile is switched off.
 
+Each profile has one sandbox on the gateway, under a name of its own.
+A profile name of 11 characters or fewer, made of letters, digits and single hyphens between them,
+gives `hermes-<profile>`.
+Any other name gives a short form with a digest, such as `hermes-dx-rch47x6qy` for `d_x`.
+
 `hermes sandbox gateway status` shows it, and `hermes sandbox gateway remove` removes it.
 Its files are in `openshell/runtime/gateway/` in the Hermes data folder:
 

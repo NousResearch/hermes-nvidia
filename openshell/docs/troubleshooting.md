@@ -55,6 +55,7 @@ runs on the host.
 |---|---|
 | "Not supported on macOS yet." | Use Windows 11 or Linux |
 | "Not available for the default profile yet." | Use another profile |
+| "Not available for a profile named runtime." | Use another profile |
 | "Needs a newer version of Hermes." or "Needs a newer version of the desktop app." | [Get a Hermes build with sandbox support](install.md#get-a-hermes-build-with-sandbox-support) |
 | "Couldn't check this computer." | Check again |
 | A reason about a key, a provider, a sign-in or a file that can't be read | See [What keeps the switch off](credentials.md#what-keeps-the-switch-off) |

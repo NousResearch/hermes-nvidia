@@ -37,6 +37,7 @@ What the sandbox gets:
 """
 from __future__ import annotations
 
+import base64
 import collections
 import hashlib
 import json
@@ -181,11 +182,132 @@ def ensure_managed(cfg: OpenShellConfig, **kwargs) -> Optional[dict]:
     return info
 
 
+SANDBOX_PREFIX = "hermes-"
+# The longest sandbox name the gateway takes: OpenShell joins three names with "--" into one DNS label of 63.
+NAME_LIMIT = 19
+_DNS_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")  # a DNS label without "--", which the gateway refuses too
+PROFILE_LABEL = "hermes.profile"  # the profile, where the gateway takes it as a label value
+PROFILE_ID_LABEL = "hermes.profile-id"  # a digest of the profile: every profile has one
+_LABEL_VALUE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$")
+
+
 def sandbox_name(profile: str) -> str:
-    """One sandbox per profile, under a stable name: a crashed launcher's sandbox is found and
-    replaced on the next start, and logs and proposals stay keyed to the profile."""
-    slug = re.sub(r"[^a-z0-9-]+", "-", profile.lower()).strip("-") or "default"
-    return f"hermes-{slug}"[:63].rstrip("-")
+    """One sandbox per profile, under a stable name that is the profile's alone and that the gateway takes: a
+    crashed launcher's sandbox is found and replaced on the next start, and logs and proposals stay keyed to
+    the profile.
+
+    ``hermes-<profile>`` while the profile is itself a DNS label and the name stays under ``NAME_LIMIT`` (18
+    characters at most). Every other profile gets one to three of its letters and digits and a digest of its
+    whole name, ``NAME_LIMIT`` characters exactly. The two forms differ in length, so they are never equal, and
+    two names of the second form are equal only when 40 bits or more of two SHA-256 digests are."""
+    profile = profile or "default"
+    if _DNS_NAME.match(profile) and len(SANDBOX_PREFIX) + len(profile) < NAME_LIMIT:
+        return SANDBOX_PREFIX + profile
+    head = re.sub(r"[^a-z0-9]", "", profile.lower())[:3] or "p"
+    digest = base64.b32encode(hashlib.sha256(profile.encode("utf-8")).digest()).decode("ascii").lower()
+    return f"{SANDBOX_PREFIX}{head}-{digest}"[:NAME_LIMIT]
+
+
+def folded_sandbox_name(profile: str) -> str:
+    """The folded form of *profile*'s sandbox name: ``hermes-`` and the profile with every character that is
+    not a letter, a digit or a hyphen as a hyphen, without hyphens at its ends, 63 characters at most. Two
+    profiles can share it: ``d_x`` and ``d-x`` both give ``hermes-d-x``. A sandbox created under it is looked
+    for at a start and at a switch-off (``leftover_names``)."""
+    slug = re.sub(r"[^a-z0-9-]+", "-", (profile or "default").lower()).strip("-") or "default"
+    return f"{SANDBOX_PREFIX}{slug}"[:63].rstrip("-")
+
+
+def second_name(profile: str) -> Optional[str]:
+    """The folded form of *profile*'s sandbox name, where a sandbox can stand under it beside the one under
+    ``sandbox_name``: None when the two forms are the same name, and when the gateway refuses the folded form
+    (over ``NAME_LIMIT``, or with "--"), since it holds no sandbox of such a name."""
+    name, folded = sandbox_name(profile), folded_sandbox_name(profile)
+    return folded if folded != name and len(folded) <= NAME_LIMIT and "--" not in folded else None
+
+
+class NameTaken(DriverUnavailable):
+    """The gateway has a sandbox under this profile's name that is labelled for another profile."""
+
+
+def profile_digest(profile: str) -> str:
+    return hashlib.sha256((profile or "default").encode("utf-8")).hexdigest()[:32]
+
+
+def profile_labels(profile: str) -> dict:
+    """The labels a profile's sandbox is created with: a digest of the profile always, and the profile itself
+    where the gateway takes it as a label value (63 characters at most, a letter or digit at both ends)."""
+    profile = profile or "default"
+    labels = {PROFILE_ID_LABEL: profile_digest(profile)}
+    if _LABEL_VALUE.match(profile):
+        labels[PROFILE_LABEL] = profile
+    return labels
+
+
+def sandbox_labels(found) -> Optional[dict]:
+    """The labels of a sandbox in what a gateway returned for it: the ``labels`` object at the top of the CLI's
+    ``sandbox get -o json`` and of ``GatewayApi.sandbox_state``. Both hold the gateway's ``metadata.labels``,
+    the labels given at create. None when the sandbox has none."""
+    labels = found.get("labels") if isinstance(found, dict) else None
+    return labels if isinstance(labels, dict) and labels else None
+
+
+def owner_says(labels: Optional[dict], profile: str) -> Optional[bool]:
+    """Whether a sandbox with these labels is *profile*'s: True, False, or None when no label says."""
+    labels = labels or {}
+    if PROFILE_ID_LABEL in labels:
+        return str(labels[PROFILE_ID_LABEL]) == profile_digest(profile)
+    if PROFILE_LABEL in labels:
+        return str(labels[PROFILE_LABEL]) == (profile or "default")
+    return None
+
+
+def other_profiles(profile: str) -> Optional[list]:
+    """The other profiles whose sandbox switch is on in this Hermes root; None when they cannot be listed."""
+    try:
+        from hermes_constants import get_default_hermes_root
+
+        from .gateway_service import profiles_in_use
+
+        return profiles_in_use(get_default_hermes_root().resolve(), leaving=profile)
+    except Exception:
+        log.debug("the profiles that are switched on could not be listed", exc_info=True)
+        return None
+
+
+def shared_names(profile: str, others: Optional[list]) -> set:
+    """The sandbox names of *profile* (its own, and the folded form) that one of *others* has too, under
+    either form. With *others* unknown: the folded form, when it differs from the profile's own name."""
+    name, folded = sandbox_name(profile), folded_sandbox_name(profile)
+    if others is None:
+        return {folded} - {name}
+    return {name, folded} & {n for other in others for n in (sandbox_name(other), folded_sandbox_name(other))}
+
+
+def leftover_names(profile: str, find, others: Optional[list]) -> list:
+    """The sandboxes on the gateway that are *profile*'s to delete before it starts and when it is switched
+    off: the one under its name, and one under the folded form of its name (``folded_sandbox_name``).
+
+    *find(name)* is what the gateway returns for a name (None: it has no such sandbox). A sandbox whose labels
+    name another profile is never listed. One under the folded form whose labels do not say is listed only
+    when none of *others* (the other profiles that are switched on) has that name under either form: it is
+    then this profile's own. A sandbox under this profile's name that is labelled for another raises: deleting
+    it would end that profile's sandbox, and two sandboxes cannot share the name."""
+    name, folded = sandbox_name(profile), second_name(profile)
+    names = []
+    found = find(name)
+    if found is not None:
+        if owner_says(sandbox_labels(found), profile) is False:
+            raise NameTaken(f"the gateway has a sandbox named {name} that belongs to another profile; it was "
+                            f"left as it is.")
+        names.append(name)
+    found = find(folded) if folded else None
+    if found is not None:
+        mine = owner_says(sandbox_labels(found), profile)
+        if mine is None:
+            mine = others is not None and folded not in shared_names(profile, others)
+        if mine:
+            names.append(folded)
+    return names
 
 
 def parse_version(text: str) -> Optional[tuple]:
@@ -1192,7 +1314,8 @@ class CredentialSinkMixin:
         self._provider_notes = notes
         for note in notes:
             self._note(note)
-        self._forget_old(Path(request.config_dir), [p["name"] for p in self._providers])
+        self._forget_old(Path(request.config_dir), [p["name"] for p in self._providers],
+                         shared_names(request.profile, other_profiles(request.profile)))
         self._forget_first_names(Path(request.config_dir), prefix, request.secrets,
                                  [p["name"] for p in self._providers])
         return self._providers
@@ -1229,10 +1352,14 @@ class CredentialSinkMixin:
         except OSError as exc:
             self._note(f"could not record the cleanup of earlier providers: {exc}")
 
-    def _forget_old(self, config_dir: Path, names: list) -> None:
+    def _forget_old(self, config_dir: Path, names: list, shared=()) -> None:
         """A provider's name changes with what its profile says, so the ones this sandbox no longer uses are
         deleted from the gateway (they hold a key). The names of the last start are kept in the launcher's
-        state folder. Best effort: a provider that cannot be deleted is tried again at the next start."""
+        state folder. Best effort: a provider that cannot be deleted is tried again at the next start.
+
+        *shared*: sandbox names this profile has in common with another profile that is switched on
+        (``shared_names``). A provider registered under such a name can be the one that profile's sandbox
+        uses: it is left on the gateway and tried again at the next start."""
         record = config_dir / "providers.json"
         try:
             before = [str(n) for n in json.loads(record.read_text(encoding="utf-8"))]
@@ -1241,6 +1368,10 @@ class CredentialSinkMixin:
         left = []
         for name in before:
             if name in names:
+                continue
+            if any(name.startswith(f"{prefix}-") for prefix in shared):
+                left.append(name)
+                self._note(f"provider {name} is left on the gateway: another profile's sandbox has that name")
                 continue
             try:
                 self._gw_forget(name)
@@ -1894,7 +2025,10 @@ class GatewayApi:
                 return None
             raise
         phase = self.pb.SandboxPhase.Name(ref.status.phase).replace("SANDBOX_PHASE_", "")
-        return {"phase": phase, "exit_code": ref.status.exit_code, "policy_version": ref.status.current_policy_version}
+        # The SDK's reference holds the gateway's ``metadata.labels`` as ``labels``: the labels given at create,
+        # which say whose sandbox it is. A reference without the field reads as a sandbox without labels.
+        return {"phase": phase, "exit_code": ref.status.exit_code, "policy_version": ref.status.current_policy_version,
+                "labels": dict(getattr(ref, "labels", None) or {})}
 
     def delete_sandbox(self, name: str, timeout: float) -> None:
         result = self.client.delete(name, workspace=self.cfg.workspace, allow_missing=True)
@@ -2148,18 +2282,24 @@ class OpenShellDriver(CredentialSinkMixin, SandboxDriver):
     def drop_leftover(self, profile: str) -> bool:
         """Also the switch-off without a launcher: returns once the sandbox is gone from the gateway, and
         raises when it cannot be deleted or the gateway cannot say."""
-        name = sandbox_name(profile)
+        others = other_profiles(profile)
         try:
-            found = self.api.sandbox_state(name)
+            names = leftover_names(profile, self.api.sandbox_state, others)
+        except NameTaken:
+            raise
         except Exception:
-            if not self._gone_without_gateway(name):
+            # No answer. Without its gateway a sandbox has containers under the name it was created with: this
+            # profile's name, and the folded form where that is this profile's alone.
+            names, folded = [sandbox_name(profile)], second_name(profile)
+            if folded and others is not None and folded not in shared_names(profile, others):
+                names.append(folded)
+            if not all([self._gone_without_gateway(name) for name in names]):
                 raise
             return False
-        if found is None:
-            return False
-        self._note(f"deleting leftover sandbox {name} before the profile's folder is reviewed")
-        self.api.delete_sandbox(name, timeout=120)
-        return True
+        for name in names:
+            self._note(f"deleting leftover sandbox {name} before the profile's folder is reviewed")
+            self.api.delete_sandbox(name, timeout=120)
+        return bool(names)
 
     def _gone_without_gateway(self, name: str) -> bool:
         """After a question the gateway did not answer: whether sandbox *name* is known to be gone all the same.
@@ -2203,11 +2343,14 @@ class OpenShellDriver(CredentialSinkMixin, SandboxDriver):
         self._ensure_managed()  # the shared gateway is healthy before a sandbox is created on it
         self._request, self._final_code, self._cached, self._checked = request, None, None, 0.0
         self._log = open(request.log_path, "ab")
-        name = sandbox_name(request.profile or request.sandbox_id)
-        # A sandbox under this name is a leftover from a launcher that died: replace it.
-        if self.api.sandbox_state(name) is not None:
-            self._note(f"deleting leftover sandbox {name}")
-            self.api.delete_sandbox(name, timeout=120)
+        profile = request.profile or request.sandbox_id
+        name = sandbox_name(profile)
+        # A sandbox of this profile is a leftover from a launcher that died: replace it. Another profile's
+        # sandbox is never deleted, whatever its name (``leftover_names``).
+        for leftover in leftover_names(profile, self.api.sandbox_state, other_profiles(profile)):
+            self._note(f"deleting leftover sandbox {leftover}")
+            self.api.delete_sandbox(leftover, timeout=120)
+        self._adopt_archive(Path(request.config_dir) / "audit", folded_sandbox_name(profile), name)
         self._name, self._runtime = name, runtime
         # Website rules and model keys are usable by Hermes's interpreter (and, through OpenShell's
         # ancestor match, by what it starts); the executable is the resolved store Python.
@@ -2266,7 +2409,7 @@ class OpenShellDriver(CredentialSinkMixin, SandboxDriver):
                    f"(runtime {self._plan.runtime}), providers {[p['name'] for p in providers]}, "
                    f"keys withheld {self._withheld}"
                    + (f", endpoints changed inside (keys withheld) {self._changed}" if self._changed else ""))
-        self.api.create_sandbox(name, spec, labels={"hermes.profile": request.profile or "default"})
+        self.api.create_sandbox(name, spec, labels=profile_labels(request.profile or "default"))
         self.api.wait_ready(name, timeout=300)
         self._check_readiness()
         if self.cfg.ocsf_json:
@@ -2473,6 +2616,19 @@ class OpenShellDriver(CredentialSinkMixin, SandboxDriver):
 
     def sandbox_gone(self) -> bool:
         return self._gone
+
+    def _adopt_archive(self, directory: Path, folded: str, name: str) -> None:
+        """The audit files written under the folded form of the sandbox's name are renamed to the name the
+        sandbox has, so the profile's history stays readable (``archive_files``). Never holds the start."""
+        if folded == name or not directory.is_dir():
+            return
+        for path in sorted(directory.glob(f"ocsf-{folded}-*.jsonl")):
+            target = path.with_name(f"ocsf-{name}-{path.name[len(f'ocsf-{folded}-'):]}")
+            try:
+                if not target.exists():
+                    path.rename(target)
+            except OSError as exc:
+                self._note(f"could not rename the audit file {path.name}: {exc}")
 
     def _release(self) -> None:
         """The sandbox is gone: the held files go back under their names. Never raises (the stop goes on). A

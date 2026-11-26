@@ -57,9 +57,8 @@ from .gateway_service import TELEMETRY_OFF, gateway_log
 from .gateway_watch import GatewayWatch, registered as gateway_registered
 from .layout import legacy_secret_cache_paths
 from .openshell_driver import (HOST_GATEWAY, CredentialSinkMixin, OpenShellConfig, config_from_spec, ensure_managed,
-                               gateway_endpoint, model_rules, network_from_policy, network_rules, parse_event,
-                               passthrough,
-                               sandbox_name)
+                               gateway_endpoint, leftover_names, model_rules, network_from_policy, network_rules,
+                               other_profiles, parse_event, passthrough, profile_labels, sandbox_name)
 from .refusals import denied_in_events
 
 log = logging.getLogger("openshell.driver.windows")
@@ -928,21 +927,19 @@ class OpenShellWindowsDriver(CredentialSinkMixin, SandboxDriver):
         raises when it cannot be deleted or the gateway cannot say. A gateway that has no registration with the
         CLI is not asked (the CLI finds its gateway through the registration): it has no sandbox. A
         registration that is there and cannot be read says nothing of the gateway: that raises."""
-        name = sandbox_name(profile)
         if not self._registered():
             return False
         try:
-            found = self.gw.sandbox(name)
+            names = leftover_names(profile, self.gw.sandbox, other_profiles(profile))
         except (CliError, OSError, subprocess.SubprocessError):
             if not self._ended_with_gateway():
                 raise
-            self._note(f"the gateway is not listening: sandbox {name} ended with it")
+            self._note(f"the gateway is not listening: the sandbox of profile {profile} ended with it")
             return False
-        if found is None:
-            return False
-        self._note(f"deleting leftover sandbox {name} before the profile's folder is reviewed")
-        self.gw.delete(name)
-        return True
+        for name in names:
+            self._note(f"deleting leftover sandbox {name} before the profile's folder is reviewed")
+            self.gw.delete(name)
+        return bool(names)
 
     def _registered(self) -> bool:
         """Whether the gateway has a registration with the CLI. Raises when a registration file is there and
@@ -982,10 +979,13 @@ class OpenShellWindowsDriver(CredentialSinkMixin, SandboxDriver):
         self._check_deny_support()  # before anything is created: the runtime may have changed since preflight
         self._request, self._final_code, self._cached, self._checked = request, None, None, 0.0
         self._log = open(request.log_path, "ab")
-        name = sandbox_name(request.profile or request.sandbox_id)
-        if self.gw.sandbox(name) is not None:
-            self._note(f"deleting leftover sandbox {name}")
-            self.gw.delete(name)
+        profile = request.profile or request.sandbox_id
+        name = sandbox_name(profile)
+        # A sandbox of this profile is a leftover from a launcher that died: replace it. Another profile's
+        # sandbox is never deleted, whatever its name (``leftover_names``).
+        for leftover in leftover_names(profile, self.gw.sandbox, other_profiles(profile)):
+            self._note(f"deleting leftover sandbox {leftover}")
+            self.gw.delete(leftover)
         self._name = name
         config_dir = Path(request.config_dir)
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -1016,7 +1016,8 @@ class OpenShellWindowsDriver(CredentialSinkMixin, SandboxDriver):
         self._start_follower()
         try:
             self.gw.create(name, self._policy_path, driver_config, env, {TOKEN_ENV: request.inner_token},
-                           providers=[p["name"] for p in providers], labels={"hermes.profile": request.profile or "default"})
+                           providers=[p["name"] for p in providers],
+                           labels=profile_labels(request.profile or "default"))
         except CliError as exc:
             self._stop_follower()
             text = str(exc).lower()
