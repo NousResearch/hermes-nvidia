@@ -2018,4 +2018,18 @@ try {
   out.waited.error = String(error && error.stack ? error.stack : error)
 }
 
+// The fixed row of a model's address says how the sandbox reaches it (tests/test_network_rows_js.py): through the
+// launcher's own rule for a model on this computer, through a key's or sign-in's provider, or not at all.
+out.modelReach = {}
+try {
+  const reachOf = endpoint => endpointRows([endpoint], [])[0]
+  out.modelReach = {
+    local: reachOf({ label: 'Model', provider: 'custom', url: 'http://127.0.0.1:11434/v1', reach: 'allowed', via: 'model' }),
+    provider: reachOf({ label: 'Model', provider: 'openrouter', url: 'https://openrouter.ai/api/v1', reach: 'allowed', via: 'provider' }),
+    blocked: reachOf({ label: 'Model', provider: 'custom', url: 'http://models.example.net:8000/v1', reach: 'blocked', via: null })
+  }
+} catch (error) {
+  out.modelReach.error = String(error && error.stack ? error.stack : error)
+}
+
 process.stdout.write(JSON.stringify(out))

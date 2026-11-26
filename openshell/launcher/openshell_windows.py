@@ -29,8 +29,9 @@ this driver on Windows. What differs from the Linux driver:
 * ``OPENSHELL_*`` names are reserved for ``--env``: busybox goes on PATH instead of ``OPENSHELL_BUSYBOX``.
 * MXC's ``wxc-exec`` and the shell are the plugin's own pinned installs (``windows_programs.py``) unless the
   person named a copy of their own; the switch-on installs both before the MXC gate asks ``wxc-exec`` anything.
-* A model server on host loopback is reachable only through a provider at
-  ``host.openshell.internal:<port>``; the sandbox's managed scope points the profile's model there.
+* A model server on host loopback is reachable only at ``host.openshell.internal:<port>``, through the
+  provider of its key or, when it takes no key, through the launcher's own rule
+  (``openshell_driver.model_rules``); the sandbox's managed scope points the profile's model there.
 * MXC lets a sandbox reach every port on host-owned addresses (``host_loopback: open``), so the
   launcher uses the gateway only over mTLS and its own host routes authenticate every request.
 """
@@ -56,7 +57,8 @@ from .gateway_service import TELEMETRY_OFF, gateway_log
 from .gateway_watch import GatewayWatch
 from .layout import legacy_secret_cache_paths
 from .openshell_driver import (HOST_GATEWAY, CredentialSinkMixin, OpenShellConfig, config_from_spec, ensure_managed,
-                               gateway_endpoint, network_from_policy, network_rules, parse_event, passthrough,
+                               gateway_endpoint, model_rules, network_from_policy, network_rules, parse_event,
+                               passthrough,
                                sandbox_name)
 from .refusals import denied_in_events
 
@@ -289,10 +291,12 @@ def native_rules(rules: dict) -> dict:
 
 
 def build_windows_policy(grants, network: dict, binaries, *, extra_readonly=(), extra_deny=(),
-                         stored_deny=(), reserved=(), keep=(), home=None) -> tuple[dict, list[str], list[str]]:
+                         stored_deny=(), reserved=(), keep=(), home=None, models=()
+                         ) -> tuple[dict, list[str], list[str]]:
     """The create-time OpenShell policy for one launch and its deny list: grants -> filesystem_policy
     (read-only and read & write), the page's network view -> network_policies bound to *binaries*, plus the
-    launcher's built-in destination while the profile at *home* shares its usage data (usage_data.py), plain
+    launcher's built-in destination while the profile at *home* shares its usage data (usage_data.py) and its
+    rules for *models* (``openshell_driver.local_models``: model servers on this computer that take no key), plain
     host grants as TLS tunnels to the site (``passthrough``; *reserved*: provider endpoints); the denied
     paths, carved around nested grants and *keep* (see ``carve_denials``), -> native paths for
     ``driver_config.mxc.denied_paths``. The deny list never goes in the policy (OpenShell's policy has no deny field).
@@ -313,7 +317,8 @@ def build_windows_policy(grants, network: dict, binaries, *, extra_readonly=(), 
           "read_write": [native(p) for p in readwrite]}
     policy = {"version": 1, "filesystem_policy": fs, "ui": dict(UI_POLICY)}
     natives = [native(b) for b in binaries]
-    rules = passthrough(native_rules(usage_data.rules(network_rules(network, natives), home, natives)), reserved)
+    rules = model_rules(usage_data.rules(network_rules(network, natives), home, natives), models, natives)
+    rules = passthrough(native_rules(rules), reserved)
     if rules:
         policy["network_policies"] = rules
     return policy, [native(p) for p in deny], notes
@@ -965,7 +970,7 @@ class OpenShellWindowsDriver(CredentialSinkMixin, SandboxDriver):
             request.grants, request.network, self._binaries, extra_readonly=extra_ro,
             extra_deny=self._root_denials(request), stored_deny=_stored_deny(config_dir),
             reserved=self._provider_endpoints(), keep=[self._sandbox_exe] if self._sandbox_exe else [],
-            home=request.home)
+            home=request.home, models=self._local_models())
         self.usage_data_open = usage_data.RULE_NAME in (self._launch_policy.get("network_policies") or {})
         self._policy_path = config_dir / "openshell-launch-policy.yaml"
         self._write_policy(self._policy_path, self._launch_policy)
@@ -1374,11 +1379,12 @@ class OpenShellWindowsDriver(CredentialSinkMixin, SandboxDriver):
 
     def _with_builtin(self, rules: dict) -> dict:
         """*rules* with the launcher's built-in destination as the profile's config says right now
-        (usage_data.py): decided at every start, network update and restored revision."""
+        (usage_data.py) and its rules for the pinned model servers on this computer that take no key
+        (``model_rules``): decided at every start, network update and restored revision."""
         home = self._request.home if self._request is not None else None
         out = usage_data.rules(rules, home, self._binaries)
         self.usage_data_open = usage_data.RULE_NAME in out
-        return out
+        return model_rules(out, self._local_models(), self._binaries)
 
     def current_network(self) -> Optional[dict]:
         policy = self.gw.policy(self._require()).get("policy") or {}

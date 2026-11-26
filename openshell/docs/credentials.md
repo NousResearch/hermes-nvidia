@@ -40,7 +40,7 @@ Every other key stays on the host.
 | Provider | In the sandbox |
 |---|---|
 | A provider with an API key stored in the profile's `.env` | Works |
-| A model server on this computer | Works |
+| A model server on this computer, with or without a key | Works |
 | Nous Portal, OpenAI Codex, xAI, MiniMax, Anthropic (Hermes's own sign-in) | Works. See [Provider sign-ins](sign-ins.md). |
 | A provider that is a program with its own sign-in | Not available |
 | Qwen OAuth, which keeps its sign-in outside the profile | Not available |
@@ -49,6 +49,19 @@ Every other key stays on the host.
 
 Use a provider with an API key or one of the sign-ins above, or run the profile without the
 sandbox.
+
+### A model server on this computer
+
+Hermes inside the sandbox reaches a model server on this computer at `host.openshell.internal`
+and the server's port.
+
+- With a key, the key's placeholder opens that address.
+- Without a key, the launcher opens that one port for Hermes. It opens the address the model had
+  at switch-on, and no other site.
+- A server that takes no key checks no caller. What the agent runs inside the sandbox can call
+  everything that server offers on its port.
+
+The Sandbox page's "Network" section shows the model's address with "Allowed".
 
 ## Read the Providers section
 

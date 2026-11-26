@@ -64,7 +64,8 @@ def config_payload(layout: ProfileLayout, spec: dict, capabilities: dict, *, san
         # page's edits neither send nor remove them.
         "builtin": usage_data.destinations(layout.home),
         "opened": [dict(row) for row in opened if isinstance(row, dict)],
-        "endpoints": model_endpoints(layout, policy["network"], capabilities, resolve or cached_resolve),
+        "endpoints": model_endpoints(layout, policy["network"], capabilities, resolve or cached_resolve,
+                                     sandboxed=sandboxed),
         "capabilities": capabilities,
         "restart_required": restart_required,
     }
@@ -83,29 +84,94 @@ def key_rows(env_rows: dict) -> list[dict]:
 
 # -- model provider endpoints ---------------------------------------------------------------------
 
-def model_endpoints(layout: ProfileLayout, network: dict, capabilities: dict, resolve: Resolver) -> list[dict]:
+def model_endpoints(layout: ProfileLayout, network: dict, capabilities: dict, resolve: Resolver, *,
+                    sandboxed: bool = False) -> list[dict]:
+    """The Network list's rows for the model addresses the profile's config names, each with whether the sandbox
+    can open it. While the profile is *sandboxed*, an address on this computer counts only when it is pinned:
+    the drivers open the addresses the profile had at switch-on, never one written into the config since."""
     out = []
+    pinned = _pinned_local_ports(layout) if sandboxed else None
     for label, entry in _model_entries(_read_config(layout)):
+        if len(out) >= MAX_MODEL_ROWS:
+            break
         url = str(entry.get("base_url") or "").strip() or _provider_default_url(str(entry.get("provider") or ""))
         if not url:
             continue
-        reach, via = endpoint_reach(url, network, capabilities, resolve)
+        reach, via = endpoint_reach(url, network, capabilities, resolve, keyless=_takes_no_key(entry),
+                                    pinned=pinned is None or _local_port(url) in pinned)
         row = {"label": label, "provider": str(entry.get("provider") or ""), "url": url, "reach": reach, "via": via}
         if row not in out:
             out.append(row)
     return out
 
 
-def endpoint_reach(url: str, network: dict, capabilities: dict, resolve: Resolver) -> tuple[str, Optional[str]]:
-    """Whether the sandbox can open *url* under *network*: ``("allowed", how)`` or ``("blocked", None)``."""
+# The Network list's model rows are read from the profile's config.yaml, which the sandbox can write, each time
+# the page asks: at most this many rows are made.
+MAX_MODEL_ROWS = 64
+
+
+def _no_lookup(host: str) -> list:
+    return []
+
+
+def _local_port(url: str) -> Optional[int]:
+    """The port of a model address on this computer's loopback; None for any other address."""
+    from .openshell_driver import _endpoint
+
+    target = _endpoint(url)
+    return target[1] if target is not None and target[0] != target[2] else None
+
+
+def _pinned_local_ports(layout: ProfileLayout) -> set:
+    """The ports of the pinned model addresses on this computer (``pins.route_pin``); none without a pin."""
+    from . import pins
+    from .openshell_driver import local_models
+
+    return {row["port"] for row in local_models(pins.route_pin(layout))}
+
+
+def _takes_no_key(entry: dict) -> bool:
+    """Whether a model entry names an address of its own and nothing a key or a sign-in comes from: no key
+    variable, no key of its own, and a provider Hermes does not register."""
+    if not str(entry.get("base_url") or "").strip() or \
+            any(entry.get(key) for key in ("key_env", "api_key_env", "api_key")):
+        return False
+    provider = str(entry.get("provider") or "").strip().lower()
+    if provider == "openrouter":
+        return False
+    try:
+        from hermes_cli.auth import PROVIDER_REGISTRY
+    except ImportError:
+        return True
+    return PROVIDER_REGISTRY.get(provider) is None
+
+
+def endpoint_reach(url: str, network: dict, capabilities: dict, resolve: Resolver, *, keyless: bool = False,
+                   pinned: bool = True) -> tuple[str, Optional[str]]:
+    """Whether the sandbox can open *url* under *network*: ``("allowed", how)`` or ``("blocked", None)``.
+
+    A driver that opens model addresses itself (``model_endpoints: provider``) opens an address on this computer
+    while it is *pinned*, for the provider of its key or with the launcher's own rule (``model``), and any other
+    address for the provider of its key or sign-in (``provider``). An entry that names no key and no provider
+    Hermes registers (*keyless*) has neither, so its address is reachable only as an allowed destination. Such a
+    driver matches a destination by the name the sandbox asks for, so no name is looked up for it here. Text
+    that is no URL, or is longer than ``openshell_driver.MAX_MODEL_URL``, is an address nothing opens."""
+    from .openshell_driver import MAX_MODEL_URL
+
+    if len(url) > MAX_MODEL_URL:
+        return "blocked", None
     if capabilities.get("model_endpoints") == "provider":
-        # The driver binds each configured model's key and endpoint as a provider at start.
-        return "allowed", "provider"
+        if _local_port(url) is not None:
+            if pinned:
+                return "allowed", "model"
+        elif not keyless:
+            return "allowed", "provider"
+        resolve = _no_lookup
     if network["egress"] == "allow":
         return "allowed", "internet"
-    parts = urllib.parse.urlsplit(url)
-    host = parts.hostname or ""
     try:
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname or ""
         port = parts.port or (443 if parts.scheme == "https" else 80)
     except ValueError:
         return "blocked", None

@@ -157,6 +157,17 @@ Some providers cannot work in a sandbox. The Sandbox page names each one before 
 the switch stays off while the profile's model uses one.
 The list is in [API keys and providers](credentials.md#providers-that-work-in-the-sandbox).
 
+### A fallback or auxiliary model on this computer (Linux)
+
+In a Linux sandbox only the profile's main model is pointed at this computer.
+A fallback or auxiliary model at `127.0.0.1` or `localhost` does not answer there.
+
+### A model server on another computer that takes no key
+
+The launcher opens a model server without a key only on this computer.
+For a server on another computer the Sandbox page's "Network" section says "Blocked" until its
+address is among the allowed destinations.
+
 ### Nous Portal on an inference address of your own
 
 For a Nous Portal model, Hermes inside the sandbox asks Nous's own inference address.

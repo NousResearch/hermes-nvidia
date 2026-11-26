@@ -512,6 +512,9 @@ def sandbox_network_settings(request: LaunchRequest) -> dict:
 
 
 _LOOPBACK_NAMES = ("127.0.0.1", "localhost", "::1")
+# A model's address is read from the profile's config.yaml, which a sandbox can write. Text longer than this is
+# no address and is not parsed.
+MAX_MODEL_URL = 2048
 
 
 def route_host(host: str) -> str:
@@ -521,10 +524,13 @@ def route_host(host: str) -> str:
 
 
 def _endpoint(url: str) -> Optional[tuple[str, int, str]]:
-    """(host as the sandbox reaches it, port, host as the URL names it) of a model URL; None without a port."""
-    parts = urllib.parse.urlsplit(url)
-    host = (parts.hostname or "").lower()
+    """(host as the sandbox reaches it, port, host as the URL names it) of a model URL; None for text that is
+    no URL with a host and a port, and for text longer than ``MAX_MODEL_URL``."""
+    if len(url) > MAX_MODEL_URL:
+        return None
     try:
+        parts = urllib.parse.urlsplit(url)
+        host = (parts.hostname or "").lower()
         port = parts.port or (443 if parts.scheme == "https" else 80)
     except ValueError:
         return None
@@ -592,7 +598,8 @@ def discover_routes(home: Optional[Path], secrets: dict, pin: Optional[dict] = N
     Any other pair a model entry of the home names has its key withheld there and is reported. Without a pin
     only (b) binds. A model entry's ``key_env``/``api_key_env`` names its key; otherwise its provider's
     registered variables do (the first one set). Host loopback (a model server on this computer) is reached
-    from inside as ``host.openshell.internal``, and only when a model entry names it."""
+    from inside as ``host.openshell.internal``, and only when a model entry names it. A pinned model entry on
+    this computer that ends up without a route is opened by the launcher's own rule (``local_models``)."""
     from .settings_view import _model_entries, _provider_default_url
 
     pin = pin or {}
@@ -1109,6 +1116,18 @@ class CredentialSinkMixin:
     def _sandbox_runs(self) -> bool:
         return getattr(self, "_name", None) is not None and getattr(self, "_request", None) is not None
 
+    def _local_models(self) -> list[dict]:
+        """The pinned model addresses on this computer that no provider of this start opens (``local_models``):
+        the ones the launcher's own rules open."""
+        request = getattr(self, "_request", None)
+        opened = []
+        for row in getattr(self, "_providers", None) or []:
+            for text in row.get("endpoints") or [row.get("endpoint")]:
+                host, _, port = str(text or "").rpartition(":")
+                if host and port.isdigit():
+                    opened.append((host, int(port)))
+        return local_models(getattr(request, "pins", None), opened)
+
     def _register_providers(self, request: LaunchRequest) -> list[dict]:
         """Before the sandbox is created: the profile's keys as the host-only copy has them, and every
         credential declared by the launcher, each as one provider with its placement and its current value."""
@@ -1323,6 +1342,51 @@ def network_rules(network: dict, binaries) -> dict:
     return rules
 
 
+# -- a model server on this computer that takes no key ------------------------------------------------------
+# A key's provider opens its model's address as one of its endpoints. A model entry without a key has no provider,
+# so the launcher opens the address with a rule of its own, as it does for the usage data destination
+# (usage_data.py): made at every start, network update and restored revision, never saved in the sandbox spec,
+# and usable by Hermes's interpreter only. The rule opens one port of this computer. A server that takes no key
+# checks no caller, so what the agent runs through that interpreter can call everything the server offers there.
+MODEL_RULE_PREFIX = usage_data.BUILTIN_PREFIX + "model_"
+# The pinned model entries come from a config.yaml a sandbox can have written: this many are read, in the config's
+# order (the model first), so the launcher opens at most this many ports of this computer.
+MAX_LOCAL_MODELS = 32
+
+
+def local_models(pin: Optional[dict], opened=()) -> list[dict]:
+    """The model addresses on this computer that the launcher opens by itself: every pinned model entry
+    (``pins.route_pin``: the entries as they were at switch-on, never the home's config, which the sandbox can
+    rewrite) whose address is this computer's loopback and that no provider opens (*opened*: the ``(host, port)``
+    pairs of the providers' endpoints). ``[{"label", "host", "port", "url"}]``, one row per port, with ``host``
+    as the sandbox reaches it. Only the first ``MAX_LOCAL_MODELS`` entries are read."""
+    out: list[dict] = []
+    taken = {(str(host).lower(), int(port)) for host, port in opened or ()}
+    models = (pin or {}).get("models")
+    for entry in (models if isinstance(models, list) else [])[:MAX_LOCAL_MODELS]:
+        url = (entry.get("url") or entry.get("base_url")) if isinstance(entry, dict) else None
+        target = _endpoint(url.strip()) if isinstance(url, str) and url.strip() else None
+        if target is None or target[0] == target[2] or target[:2] in taken:
+            continue
+        taken.add(target[:2])
+        out.append({"label": str(entry.get("label") or "Model")[:80], "host": target[0], "port": target[1],
+                    "url": url.strip()})
+    return out
+
+
+def model_rules(rules: dict, models, binaries) -> dict:
+    """*rules* (OpenShell rules by name) as the sandbox gets them: nothing under ``MODEL_RULE_PREFIX`` but one
+    rule per row of *models* (``local_models``), bound to *binaries* (Hermes's interpreter, as for the page's
+    destinations)."""
+    out = {name: rule for name, rule in (rules or {}).items() if not str(name).startswith(MODEL_RULE_PREFIX)}
+    paths = [str(b) for b in binaries or () if b]
+    for model in (models or ()) if paths else ():
+        name = f"{MODEL_RULE_PREFIX}{int(model['port'])}"
+        out[name] = {"name": name, "endpoints": [{"host": model["host"], "port": int(model["port"])}],
+                     "binaries": [{"path": p} for p in paths]}
+    return out
+
+
 # -- TLS: plain host grants are tunnels to the site itself ---------------------------------------------------
 # OpenShell's proxy terminates TLS on every allowed CONNECT by default (``tls`` unset = auto-detect: it peeks the
 # ClientHello and presents a certificate from the sandbox's own CA), so a client that does not trust that CA
@@ -1332,7 +1396,9 @@ def network_rules(network: dict, binaries) -> dict:
 # the proxy inside TLS (no credential placeholders, no L7 rules), so they get it; provider endpoints and rules
 # OpenShell drafted keep the default. OpenShell refuses a policy whose overlapping endpoints disagree on
 # ``tls``, so an endpoint another non-skip endpoint overlaps (same port, host patterns that can match the same
-# name) keeps the default too.
+# name) keeps the default too. The launcher's rule for a model server on this computer (``MODEL_RULE_PREFIX``)
+# keeps the default as well: the proxy relays its plain HTTP or TLS as it relays the endpoint of a key's
+# provider.
 PASSTHROUGH_PREFIXES = (RULE_PREFIX + "site_", "allowed_host_", "allowed_tool_", usage_data.BUILTIN_PREFIX)
 _PLAIN_KEYS = frozenset({"host", "port", "ports"})
 
@@ -1392,7 +1458,8 @@ def passthrough(rules: dict, reserved=()) -> dict:
     fixed: list[tuple[str, set]] = []  # endpoints whose TLS stays terminated (not skip)
     for name, rule in out.items():
         for i, ep in enumerate(rule.get("endpoints") or []):
-            plain = (name.startswith(PASSTHROUGH_PREFIXES) and ep.get("host") and set(ep) - {"tls"} <= _PLAIN_KEYS
+            plain = (name.startswith(PASSTHROUGH_PREFIXES) and not name.startswith(MODEL_RULE_PREFIX)
+                     and ep.get("host") and set(ep) - {"tls"} <= _PLAIN_KEYS
                      and (not ep.get("tls") or _is_skip(ep.get("tls"))))
             if plain:
                 ep.pop("tls", None)
@@ -2443,11 +2510,12 @@ class OpenShellDriver(CredentialSinkMixin, SandboxDriver):
     # -- live network, requests, revisions, audit --------------------------------------------------
     def _with_builtin(self, rules: dict) -> dict:
         """*rules* with the launcher's built-in destination as the profile's config says right now
-        (usage_data.py): decided at every start, network update and restored revision."""
+        (usage_data.py) and its rules for the pinned model servers on this computer that take no key
+        (``model_rules``): decided at every start, network update and restored revision."""
         home = self._request.home if self._request is not None else None
         out = usage_data.rules(rules, home, self._binaries)
         self.usage_data_open = usage_data.RULE_NAME in out
-        return out
+        return model_rules(out, self._local_models(), self._binaries)
 
     def _base_policy(self) -> dict:
         policy = self.api.policy_status(self._require()).get("policy")

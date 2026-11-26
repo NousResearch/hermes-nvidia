@@ -268,6 +268,8 @@ const T = {
   portLabel: port => `Port ${port}`,
   destinationTitle: 'Allow this destination?',
   reachTip: {
+    model: "This profile's model on this computer is reachable from the sandbox.",
+    provider: 'A key or sign-in of this profile is used at this address.',
     loopback: 'Services on this computer are always reachable from the sandbox.',
     rule: 'Matches an allowed destination.',
     internet: 'Internet access is allowed.',
