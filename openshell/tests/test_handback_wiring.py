@@ -470,12 +470,19 @@ def test_a_review_that_cannot_run_turns_off_and_says_so(env, monkeypatch):  # no
     assert H.is_open(lay.state_dir)  # kept: the next switch-off, or `hermes sandbox handback`, can still list it
 
 
-def test_a_revert_that_breaks_turns_off_and_says_so(env, monkeypatch):  # noqa: F811
+def test_a_revert_that_breaks_is_answered_from_the_saved_copies_and_turns_off(env, monkeypatch):  # noqa: F811
     lay = _switched_on(env)
+    before = TH.tree_bytes(lay.home)
     TH.plant_the_four(lay.home)
     monkeypatch.setattr(H, "revert", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")))
     status, payload, _ = _off(_routes(env, monkeypatch, []), "revert")
-    assert status == 200 and payload["handback"]["error"] == "RuntimeError: boom" and payload["handback"]["reverted"] == []
+    done = payload["handback"]
+    assert status == 200 and "error" not in done
+    assert done["reverted"] == ["cfgfile:config.yaml", "cronfile:cron/jobs.json", "file:scripts/cron-injected.sh",
+                                "file:scripts/hook-injected.sh"]
+    assert done["problem"] == ("Couldn't review the sandbox's changes (RuntimeError: boom). Reverted from the copies "
+                               "saved at switch-on: config.yaml, cron/jobs.json, scripts/cron-injected.sh and 1 more.")
+    assert TH.tree_bytes(lay.home) == before
     assert env["log"] == ["sandbox stopped", "unregistered", "clear"] and H.is_open(lay.state_dir)
 
 

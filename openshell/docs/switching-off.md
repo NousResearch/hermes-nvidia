@@ -45,6 +45,8 @@ hermes -p sbtest sandbox handback
 
 - `sandbox off` prints the list, changes nothing and exits with status 3 until you run it with
   `--revert` or `--keep`.
+- `sandbox off --revert` exits with status 1 when the changes could not be reviewed and nothing was
+  reverted. The sandbox is off all the same.
 - `sandbox handback` prints the list at any time.
 
 ## What the review covers
@@ -64,8 +66,15 @@ Only what the sandbox can write is compared:
   update while the sandbox is on is never listed.
 - Python bytecode in a folder the sandbox can write, such as `scripts/__pycache__`, is listed.
 
-If the comparison cannot run, the sandbox still turns off, and the page says that the changes
+A settings file or a cron jobs file that cannot be compared is one row, "could not be compared".
+Revert puts the whole file back as it was at switch-on. The other rows stay as they are.
+
+If no list can be made at all, the sandbox still turns off, and the page says that the changes
 were not reviewed.
+
+With **Revert**, the launcher then puts back every file it saved a copy of at switch-on, takes the
+new files out of `scripts` and `hooks`, and names what it reverted.
+The next switch-on reviews that session again.
 
 ## After a Keep
 
@@ -116,3 +125,5 @@ The launcher records the folder as it is.
   8 MB a file and 128 MB in all.
 - A larger file that the sandbox changed is listed as "No copy kept".
   Revert leaves it as the sandbox changed it and names it. Look at such a file before it runs.
+- A watched folder with more than 50,000 files is one row, "too many files to compare".
+  Revert takes out every file in it that was not there at switch-on.

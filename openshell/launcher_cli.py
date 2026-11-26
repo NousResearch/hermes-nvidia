@@ -765,7 +765,8 @@ def _interrupted(layout, number: int) -> int:
 
 
 def _cmd_off(args) -> int:
-    """Exit 3 means only: an answer is needed (``--revert`` or ``--keep``), nothing was changed."""
+    """Exit 3 means only: an answer is needed (``--revert`` or ``--keep``), nothing was changed. Exit 1 with the
+    sandbox off: ``--revert`` was asked for, the changes could not be reviewed and nothing was reverted."""
     from .launcher.layout import LayoutError, current_profile
     from .launcher.switch import HandbackNeeded, SwitchError, turn_off_here
 
@@ -781,11 +782,12 @@ def _cmd_off(args) -> int:
         return _fail(str(exc))
     print(json.dumps(result, indent=2))
     done = result.get("handback") or {}
+    nothing = bool(done.get("error")) and answer == "revert"
     if done.get("error"):
-        print(f"hermes sandbox: Couldn't review the sandbox's changes ({done['error']}). The sandbox is off.",
-              file=sys.stderr)
+        print(f"hermes sandbox: Couldn't review the sandbox's changes ({done['error']}). "
+              f"{'Nothing was reverted. ' if nothing else ''}The sandbox is off.", file=sys.stderr)
     _say_handed_back(layout, done, answer)
-    return 0
+    return 1 if nothing else 0
 
 
 def _say_handed_back(layout, done: dict, answer) -> None:

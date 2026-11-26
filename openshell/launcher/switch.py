@@ -94,7 +94,8 @@ switch-on:
   what the user was not shown is still put back.
 
 A hand-back step that fails or does not come back never holds the switch: the sandbox turns off and
-the answer says the review could not run (``handback.error``). A row that could not be put back keeps
+the answer says the review could not run (``handback.error``). ``revert`` is then answered from the copies
+saved at switch-on, without a list, and the answer names what was reverted. A row that could not be put back keeps
 the marker for ``revert`` (409 ``handback_incomplete``); ``keep`` is never refused for it, so there is
 always a way to turn off.
 
@@ -1130,8 +1131,28 @@ def incomplete(view: dict, outcome: dict, turning: str = "off") -> str:
             f"files, then turn {turning} again.")
 
 
+def unfinished(view: dict, left: list, turning: str = "off") -> str:
+    """What a revert says that was stopped for taking too long: the rows it did not reach (named as
+    ``not_reverted`` names them), that the same answer goes on with it, and that a keep gets past it."""
+    names = {row["id"]: row.get("name") for row in view.get("rows") or []}
+    shown = [str(names.get(row_id) or row_id) for row_id in left]
+    listed = ", ".join(shown[:3]) + (f" and {len(shown) - 3} more" if len(shown) > 3 else "")
+    stopped = "The sandbox is stopped. " if turning == "off" else ""
+    return (f"The revert did not finish in time: {'1 change is' if len(shown) == 1 else f'{len(shown)} changes are'} "
+            f"still to revert ({listed}). {stopped}Turn {turning} again with the same answer to go on with it, or "
+            f"keep the changes (--keep) to turn {turning} without it.")
+
+
 def not_reviewed(error: str) -> str:
     return f"Couldn't review the last sandbox session's changes ({error})."
+
+
+def reverted_from_copies(error: str, row_ids: list) -> str:
+    """What a revert without a list says: why there was none, and the files it reverted, three at most."""
+    shown = [str(row_id).partition(":")[2] for row_id in row_ids]
+    listed = ", ".join(shown[:3]) + (f" and {len(shown) - 3} more" if len(shown) > 3 else "")
+    return (f"Couldn't review the sandbox's changes ({error}). Reverted from the copies saved at switch-on: "
+            f"{listed}.")
 
 
 def _why(exc: BaseException) -> str:
@@ -1161,8 +1182,9 @@ def _bounded(call, *args, **kwargs):
 
 def review(layout, *, quick: bool = False) -> dict:
     """The hand-back's list for *layout* (``handback.diff``; *quick* for a preview). Never raises and never waits
-    longer than HANDBACK_TIMEOUT: when the list cannot be made, ``error`` says why and no row is listed, so
-    nothing is asked and nothing holds the switch.
+    longer than HANDBACK_TIMEOUT: when the list cannot be made, ``error`` says why (``late``: it did not come
+    back in time) and no row is listed, so nothing is asked and nothing holds the switch. A file the sandbox wrote
+    that cannot be compared is not such a case: it is a row of the list (``handback.diff``).
 
     A sign-in store a host process wrote while the sandbox was on is not a change of the sandbox's. Where that
     can be told, the pin and the record follow it first (``pins.restore_stores``, *follow_only*), as the next
@@ -1179,7 +1201,8 @@ def review(layout, *, quick: bool = False) -> dict:
         return {**view, "error": "the copy saved when the sandbox was turned on cannot be read", "unreadable": True}
     except Exception as exc:
         log.warning("hand-back: the list for profile %s could not be made: %s", layout.name, _why(exc))
-        return {"open": False, "rows": [], "unanswered": 0, "error": _why(exc)}
+        return {"open": False, "rows": [], "unanswered": 0, "error": _why(exc),
+                **({"late": True} if isinstance(exc, TimeoutError) else {})}
 
 
 def needs_an_answer(view: dict, answer: Optional[str]) -> bool:
@@ -1262,12 +1285,21 @@ def hand_back(layout, view: dict, answer: Optional[str], *, record_keep: bool = 
 
     *sandbox_gone* False: the sandbox could not be confirmed gone, so the credential files its driver keeps out
     of its reach stay where they are (``pins.release``, *unhold*).
+
+    A list that could not be made reverts nothing, with one exception: the user's ``"revert"``. The rows are
+    then looked for once more (a list that came back too late is not waited for again), and when that fails too
+    the revert is answered from the copies saved at switch-on (``handback.revert_from_copies``):
+    ``result["problem"]`` says why there was no list and what was reverted, and the baseline stays open, since
+    nobody listed that session. A revert that is late is told to stop (``handback.revert_within``): it changes
+    nothing in the home after this function has answered, the rows it did not reach hold the switch as rows a
+    revert could not put back do, and ``blocked`` says that the revert did not finish (``unfinished``).
     """
     pins.release(layout, unhold=sandbox_gone)
     error = view.get("error")
     outcome = None
     kept = [row["id"] for row in view.get("rows") or [] if row.get("answer") == "keep"]
-    if error is None or answer == "revert":  # a list that could not be made reverts nothing, unless asked to
+    unlisted, stuck = None, False
+    if error is None or (answer == "revert" and not view.get("late")):  # no list reverts nothing, unless asked to
         try:
             if record_keep and answer == "keep" and view.get("open"):
                 # No launcher recorded the terminal's keep: it holds for the rows as they were listed.
@@ -1275,11 +1307,20 @@ def hand_back(layout, view: dict, answer: Optional[str], *, record_keep: bool = 
                                 seen={row["id"]: row["state"] for row in view["rows"]})["kept"]
             # "revert" means every row, whatever was kept before. Otherwise the rows without a keep: what the
             # user was not shown, what changed after it was shown, and the rows that are always reverted.
-            outcome = _bounded(handback.revert, layout.home, layout.state_dir,
-                               "all" if answer == "revert" else "unanswered")
+            outcome = handback.revert_within(HANDBACK_TIMEOUT, layout.home, layout.state_dir,
+                                             "all" if answer == "revert" else "unanswered")
             error = None
         except Exception as exc:
-            error, outcome = _why(exc), None
+            # A revert that did not come back is not tried a second way: what held it up would do so again.
+            error, outcome, stuck = _why(exc), None, isinstance(exc, TimeoutError)
+    if error is not None and answer == "revert" and not stuck and not view.get("unreadable"):
+        try:
+            outcome = handback.revert_within(HANDBACK_TIMEOUT, layout.home, layout.state_dir, from_copies=True)
+        except Exception as exc:
+            log.warning("hand-back: the saved copies of profile %s could not be put back: %s", layout.name, _why(exc))
+            outcome = None
+        if outcome is not None and (outcome["reverted"] or outcome["left"]):
+            unlisted, error = error, None
     if error is not None:
         # Never held by a hand-back step that cannot run: the switch turns off and the answer says so. The
         # baseline stays open (the next switch-off, or `hermes sandbox handback`, can still list the changes),
@@ -1293,16 +1334,23 @@ def hand_back(layout, view: dict, answer: Optional[str], *, record_keep: bool = 
     reverted = outcome["reverted"]
     result = {"reverted": reverted, "kept": [row_id for row_id in kept if row_id not in reverted],
               "held": Path(outcome["held"]).name if outcome["held"] else None}
+    if unlisted is not None and reverted:
+        result["problem"] = reverted_from_copies(unlisted, reverted)
     unreverted = list(outcome.get("unreverted") or [])
     if unreverted:
         # The profile's own files, changed in the sandbox, with no copy to put back: left in place and named.
         result.update(unreverted=unreverted, problem=left_unreverted(view, unreverted))
     if outcome["left"]:
         if answer != "keep":
-            return {"result": result, "blocked": incomplete(view, outcome, turning), "left": outcome["left"]}
+            # A revert that was told to stop left rows for another cause than a file in use, and says so.
+            late = any(item.get("reason") == handback.NOT_REACHED for item in outcome.get("skipped") or [])
+            blocked = unfinished(view, outcome["left"], turning) if late else incomplete(view, outcome, turning)
+            return {"result": result, "blocked": blocked, "left": outcome["left"]}
         # "keep" is the way out that always works: what could not be put back stays, and is named.
         problem = not_reverted(view, outcome["left"])
         result.update(left=outcome["left"], problem=" ".join(filter(None, [problem, result.get("problem")])))
+    if unlisted is not None:
+        return {"result": result, "blocked": None}  # the baseline stays open: nobody listed that session
     _remember_kept(layout, result["kept"])
     _close_quietly(layout)  # before the service and the marker go: no baseline stays open behind a cleared marker
     return {"result": result, "blocked": None}

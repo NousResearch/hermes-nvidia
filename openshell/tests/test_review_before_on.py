@@ -161,13 +161,15 @@ def test_a_review_that_cannot_run_stops_the_switch_on_and_keep_is_the_way_past(e
     assert H.diff(lay.home, lay.state_dir)["rows"] == []  # a new record, taken after the keep
 
 
-def test_a_revert_that_cannot_run_stops_the_switch_on_too(env, monkeypatch):  # noqa: F811
+def test_a_revert_that_cannot_run_is_answered_from_the_saved_copies_and_the_switch_on_goes_on(env, monkeypatch):  # noqa: F811
     lay = _unanswered(env)
     monkeypatch.setattr(H, "revert", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")))
-    with pytest.raises(SW.SwitchError) as err:
-        _on(env, handback_answer="revert")
-    assert str(err.value) == "Couldn't review the last sandbox session's changes (RuntimeError: boom)."
-    assert "install" not in env["log"] and H.is_open(lay.state_dir) and not P.present(lay)
+    done = _on(env, handback_answer="revert")["handback"]
+    assert done["reverted"] == ["cfgfile:config.yaml", "cronfile:cron/jobs.json", "file:scripts/cron-injected.sh",
+                                "file:scripts/hook-injected.sh"]
+    assert done["problem"].startswith("Couldn't review the sandbox's changes (RuntimeError: boom). Reverted from the "
+                                      "copies saved at switch-on: config.yaml, ")
+    assert TH.tier1_state(lay.home) == env["user"] and _pinned_command(lay) is None and "mark" in env["log"]
 
 
 def test_a_record_that_cannot_be_read_compares_with_nothing_and_is_dropped(env):  # noqa: F811

@@ -14,6 +14,9 @@ when the sandbox was switched on, and compares the home with it before the profi
 * ``revert``         puts the baseline's value or file back for the rows named and moves the sandbox's version
   to ``handback/held/<time>/``. In config.yaml only the row's key changes (Hermes's round-trip YAML writer:
   comments, order and quoting stay; see ``_edit_config``). ``keep`` records an answer; ``close`` ends the baseline.
+* ``revert_from_copies``  a revert without the look at the whole home, for when that look cannot be made: every
+  saved copy that differs from the home's file comes back, and new files leave the folders that run.
+  ``revert_within`` bounds either revert in time and tells a step that is late to change nothing more.
 * ``update_baseline_for_host_write``  after the launcher itself wrote a file or a config key for the user.
 * ``remember_kept`` / ``kept``  what the user kept at a hand-back, for as long as it is still in the home.
 * ``stamp``          a cheap token of the watched files, for a status that is polled: it changes when the list may.
@@ -28,10 +31,14 @@ Everything lives in ``<state_dir>/handback/`` (the launcher's state folder: outs
 granted to a sandbox), owner-only. Nothing here follows a link: a link is recorded by its target, a link that
 leads out of the home is a row of its own, and nothing is read, hashed or restored through one. No network.
 
-Limits, on purpose: the listing is bounded (``MAX_ENTRIES``; a folder cut short is named in ``incomplete``), files
-over ``COPY_MAX_FILE`` are hashed but not copied, files over ``HASH_MAX_FILE`` are compared by size and time,
-links outside the watched folders are looked for ``LINK_WALK_DEPTH`` folders deep, and a config.yaml that is
-itself a link is not read (named in ``incomplete``).
+What the sandbox wrote decides no more than its own rows. A settings file or a jobs file that cannot be walked (a
+value of the wrong type, a file that refers to itself or is nested too deep) is one row for the whole file, restored
+from its copy on a revert; the other comparisons keep their rows.
+
+Limits, on purpose: the listing is bounded (``MAX_ENTRIES`` for each watched folder; a folder cut short is named in
+``incomplete`` and is a row of its own), files over ``COPY_MAX_FILE`` are hashed but not copied, files over
+``HASH_MAX_FILE`` are compared by size and time, links outside the watched folders are looked for
+``LINK_WALK_DEPTH`` folders deep, and a config.yaml that is itself a link is not read (named in ``incomplete``).
 """
 from __future__ import annotations
 
@@ -44,6 +51,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
@@ -84,7 +92,8 @@ TIER2_FILES = {"SOUL.md": "Context file"}
 ENV_FILES = (".env", ".op.env")
 _FALLBACK_STORES = (*ENV_FILES, "auth.json", ".anthropic_oauth.json")
 
-MAX_ENTRIES = 50_000            # folder entries one take or diff walks in the watched folders
+MAX_ENTRIES = 50_000            # folder entries one take or diff walks in each watched folder
+STOP_GRACE = 10.0               # seconds a revert that was told to stop is waited for (its one write in flight)
 COPY_MAX_FILE = 8 * 1024 * 1024
 # Beta decision: what a revert does with a file the profile had at switch-on, that the sandbox changed, and of which
 # no copy was kept (it is over COPY_MAX_FILE, or the copies had reached COPY_MAX_TOTAL: scripts, hook files, a
@@ -107,6 +116,10 @@ KEPT_FILE = "kept.json"
 _SYMLINK_TAG, _JUNCTION_TAG = 0xA000000C, 0xA0000003
 _REPARSE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 _ABSENT = {"type": "absent"}
+# The two files the sandbox and this computer share, as a row for the whole file: id prefix, kind, label.
+_WHOLE_FILE = {CONFIG: ("cfgfile:", "config_file", "Settings file"), JOBS: ("cronfile:", "cron_file", "Cron jobs file")}
+UNCOMPARED = "could not be compared"
+NOT_REACHED = "not reached in time"  # why a revert that was told to stop skipped a row
 
 
 def host_written_trees() -> tuple:
@@ -123,6 +136,10 @@ def host_written_trees() -> tuple:
 
 class _Swapped(Exception):
     """Another file is at the path than the one that was looked at (a writer replaced it by rename)."""
+
+
+class _Stopped(Exception):
+    """The caller of a revert stopped waiting for it: nothing more is changed in the home."""
 
 
 def _pause(seconds: float) -> None:
@@ -434,11 +451,11 @@ def _parse_config(data: Optional[bytes]) -> Optional[dict]:
         return None
     try:
         doc = hermes_yaml.safe_load(data.decode("utf-8-sig"))
-    except Exception:  # a YAML error, or bytes that are not text
+        if doc is None:
+            return {}
+        return _plain(doc) if isinstance(doc, dict) else None
+    except Exception:  # a YAML error, bytes that are not text, or a value that holds itself or is nested too deep
         return None
-    if doc is None:
-        return {}
-    return _plain(doc) if isinstance(doc, dict) else None
 
 
 def _dig(doc: Any, path: Iterable[str]) -> Any:
@@ -648,7 +665,7 @@ def _parse_jobs(data: Optional[bytes]) -> Optional[tuple[Any, list]]:
             doc = json.loads(text)
         except ValueError:
             doc = json.loads(text, strict=False)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):  # not JSON, not text, or nested too deep to read
         return None
     jobs = doc.get("jobs") if isinstance(doc, dict) else doc
     if not isinstance(jobs, list) or not all(isinstance(job, dict) for job in jobs):
@@ -667,7 +684,8 @@ def _runnable(job: dict) -> bool:
 def _payload(job: dict) -> dict:
     out = {f: _plain(job[f]) for f in JOB_FIELDS if f not in ("skills", "enabled") and job.get(f)}
     skills = job.get("skills")
-    names = [job.get("skill")] if skills is None else [skills] if isinstance(skills, str) else list(skills)
+    # Hermes writes a list of names. Any other value is compared as it is, so the record differs and is a row.
+    names = [job.get("skill")] if skills is None else list(skills) if isinstance(skills, (list, dict)) else [skills]
     names = list(dict.fromkeys(str(name) for name in names if name))
     if names:
         out["skills"] = names
@@ -749,7 +767,7 @@ class _Scan:
         self.home, self.manifest, self.paths, self.data, self.incomplete = home, {}, {}, {}, []
         self._folded: dict[str, str] = {}
         self._known = {home.fold(rel): entry for rel, entry in (known or {}).items()} if quick else {}
-        self._left, self._copy_left = MAX_ENTRIES, COPY_MAX_TOTAL
+        self._copy_left = COPY_MAX_TOTAL
         self._later: list[tuple] = []
         self.host_written = frozenset(home.fold(root) for root in host_written_trees())
         want = COPY_MAX_FILE if copies else 0
@@ -857,15 +875,15 @@ class _Scan:
         top = self._add(root, tier=tier)
         if top is None or top["type"] != "dir":
             return
-        stack = [(self.paths[root], root)]
+        stack, left = [(self.paths[root], root)], MAX_ENTRIES  # each watched folder has a limit of its own
         while stack:
             folder, rel = stack.pop()
             below = []
             for name, st in _listing(folder):
-                if self._left <= 0:
+                if left <= 0:
                     self.incomplete.append(root)
                     return
-                self._left -= 1
+                left -= 1
                 child, path = f"{rel}/{name}", os.path.join(folder, name)
                 entry = self._add(child, path, tier=tier, want=want, st=st)
                 if entry is not None and entry["type"] == "dir":
@@ -1002,7 +1020,9 @@ def _public(row: dict) -> dict:
 class _Diff:
     """The baseline and the home side by side: Tier 1 rows, Tier 2 items, the other settings that differ."""
 
-    def __init__(self, home, state_dir, quick: bool = False):
+    def __init__(self, home, state_dir, quick: bool = False, listed: bool = True):
+        """*listed* False: no look at the whole home is made. The rows are the saved copies the home's files
+        differ from and the new files of the folders that run (``_from_copies``), for a revert without a list."""
         self.store = _store(state_dir)
         self.base = _read_json(self.store / "baseline.json")
         self.open = isinstance(self.base, dict) and isinstance(self.base.get("manifest"), dict)
@@ -1010,15 +1030,20 @@ class _Diff:
             return
         self.home = _Home(home, self.base.get("case_insensitive"))
         before = self.base["manifest"]
+        self.before = {self.home.fold(rel): (rel, entry) for rel, entry in before.items()}
+        self.rows, self.items, self.other, self.base_doc = [], [], [], {}
+        if not listed:
+            self.now, self.incomplete = {}, sorted(set(self.base.get("incomplete") or []))
+            self._from_copies()
+            self.rows.sort(key=lambda row: row["id"])
+            return
         self.scan = _Scan(self.home, known=before, quick=quick,
                           referenced=[rel for rel, e in before.items() if e.get("ref")],
                           stores=[rel for rel, e in before.items() if e.get("store")])
-        self.before = {self.home.fold(rel): (rel, entry) for rel, entry in before.items()}
         self.now = {self.home.fold(rel): (rel, entry) for rel, entry in self.scan.manifest.items()}
         self.incomplete = sorted(set(self.base.get("incomplete") or []) | set(self.scan.incomplete))
-        self.rows, self.items, self.other, self.base_doc = [], [], [], {}
-        self._config()
-        self._cron()
+        self._part(self._config, CONFIG)
+        self._part(self._cron, JOBS)
         self._files()
         answers = _read_json(self.store / "answers.json") or {}
         for row in self.rows:
@@ -1031,6 +1056,69 @@ class _Diff:
     def pair(self, rel: str) -> tuple[dict, dict]:
         key = self.home.fold(rel)
         return self.before.get(key, (rel, _ABSENT))[1], self.now.get(key, (rel, _ABSENT))[1]
+
+    def _whole(self, rel: str, detail: str) -> None:
+        """One row for the whole of a shared file: a revert puts its copy back."""
+        was, now = self.pair(rel)
+        prefix, kind, label = _WHOLE_FILE[rel]
+        self.rows.append(_row(prefix + rel, kind, label, rel, detail, rel=rel,
+                              state=[now["type"], now.get("sha256"), now.get("link")],
+                              can_restore=bool(was.get("copy")) or was["type"] == "absent"))
+
+    def _part(self, compare, rel: str) -> None:
+        """Run the comparison of one shared file. The sandbox writes that file, so a value in it that the comparison
+        cannot walk must cost no more than the file's own rows: they give way to one row for the whole file, and
+        the other comparisons keep theirs. A file that is byte for byte as it was at switch-on is no row."""
+        mark = len(self.rows)
+        try:
+            compare()
+        except Exception:
+            del self.rows[mark:]
+            if rel == CONFIG:
+                self.other = []
+            was, now = self.pair(rel)
+            if "absent" in (was["type"], now["type"]) or not _same(was, now):
+                self._whole(rel, UNCOMPARED)
+
+    def _from_copies(self) -> None:
+        """The rows of a revert without a list: each file a copy was kept of that is gone or differs from that copy,
+        and each file in the folders that run (``COPIED_TREES``) that the record does not have. A folder whose
+        listing was cut short at switch-on is left out: its new files cannot be told from the profile's own. A
+        folder with more entries than ``MAX_ENTRIES`` is one row for the folder (``folder_cut``) in place of a row
+        for each new file, so the sandbox cannot make the list longer than that."""
+        for key, (rel, was) in sorted(self.before.items()):
+            if not was.get("copy"):
+                continue
+            now = (self.home.entry(self.home.actual(rel))[0] if self.home.plain_parents(rel) else None) or _ABSENT
+            if now is not _ABSENT and _same(was, now):
+                continue
+            if rel in _WHOLE_FILE:
+                self.now[key] = (rel, now)
+                self._whole(rel, "removed" if now is _ABSENT else "changed")
+                continue
+            what = "removed" if now is _ABSENT else "changed"
+            label = "Program file" if was.get("ref") else TIER1_TREES.get(rel.split("/")[0], "File")
+            self.rows.append(_row(f"file:{rel}", f"file_{what}", label, rel, what, state=_file_row_state(now), rel=rel))
+        for root in COPIED_TREES:
+            if root in self.incomplete or _kind_at(self.home.actual(root)) != "dir":
+                continue
+            stack, mark, left = [(self.home.actual(root), root)], len(self.rows), MAX_ENTRIES
+            while stack:
+                folder, rel = stack.pop()
+                for name, st in _listing(folder):
+                    left -= 1
+                    child, path = f"{rel}/{name}", os.path.join(folder, name)
+                    if _kind(st) == "dir":
+                        stack.append((path, child))
+                    elif self.home.fold(child) not in self.before:
+                        now = self.home.entry(path, st=st, read=False)[0] or _ABSENT
+                        self.rows.append(_row(f"file:{child}", "file_new", TIER1_TREES[root], child, "new",
+                                              state=_file_row_state(now), rel=child))
+                if left < 0:
+                    del self.rows[mark:]
+                    self.rows.append(_row(f"folder:{root}", "folder_cut", "Folder", root, "too many files to compare",
+                                          state=[root, "cut"], rel=root))
+                    break
 
     def _config(self) -> None:
         was, now = self.pair(CONFIG)
@@ -1051,11 +1139,8 @@ class _Diff:
             return
         if was["type"] == now["type"] == "absent" or ("absent" not in (was["type"], now["type"]) and _same(was, now)):
             return  # as it was at switch-on, readable or not
-        detail = ("removed" if now["type"] == "absent" else "replaced by a link" if now["type"] != "file"
-                  else "not valid YAML" if self.scan.config is None else "changed")
-        self.rows.append(_row("cfgfile:" + CONFIG, "config_file", "Settings file", CONFIG, detail, rel=CONFIG,
-                              state=[now["type"], now.get("sha256"), now.get("link")],
-                              can_restore=bool(was.get("copy")) or was["type"] == "absent"))
+        self._whole(CONFIG, "removed" if now["type"] == "absent" else "replaced by a link" if now["type"] != "file"
+                    else "not valid YAML" if self.scan.config is None else "changed")
 
     def _cron(self) -> None:
         was, now = self.pair(JOBS)
@@ -1064,70 +1149,87 @@ class _Diff:
         readable = now["type"] == "file" and self.scan.jobs is not None
         if not readable or self.base["cron"]["state"] not in ("ok", "absent"):
             if was["type"] == "absent" or not _same(was, now):
-                detail = "changed" if readable else "not valid JSON" if now["type"] == "file" else "replaced by a link"
-                self.rows.append(_row("cronfile:" + JOBS, "cron_file", "Cron jobs file", JOBS, detail, rel=JOBS,
-                                      state=[now["type"], now.get("sha256"), now.get("link")],
-                                      can_restore=bool(was.get("copy")) or was["type"] == "absent"))
+                self._whole(JOBS, "changed" if readable else "not valid JSON" if now["type"] == "file"
+                            else "replaced by a link")
             return
         before = self.base["cron"].get("jobs") or {}
         for index, job in enumerate(self.scan.jobs):
-            job_id, payload = _job_id(job, index), _payload(job)
+            job_id = _job_id(job, index)
             old = before.get(job_id)
-            if old == payload:
-                continue
-            if old is None:
-                kind, detail = "cron_new", f"new, {_job_runs(payload)}"
-            else:
-                fields = ", ".join(f for f in JOB_FIELDS if old.get(f) != payload.get(f))
-                kind, detail = "cron_changed", f"changed ({fields}), {_job_runs(payload)}"
-            self.rows.append(_row(f"cron:{job_id}", kind, "Cron job", _short(job.get("name") or job_id, 60), detail,
-                                  state=payload, job=job_id, can_restore=old is None or bool(was.get("copy"))))
+            try:
+                payload = _payload(job)
+                if old == payload:
+                    continue
+                if old is None:
+                    detail = f"new, {_job_runs(payload)}"
+                else:
+                    fields = ", ".join(f for f in JOB_FIELDS if old.get(f) != payload.get(f))
+                    detail = f"changed ({fields}), {_job_runs(payload)}"
+                name, state = _short(job.get("name") or job_id, 60), payload
+            except Exception:  # a value of this record cannot be walked: the record is a row all the same
+                name, state, detail = _short(job_id, 60), [job_id, now.get("sha256")], UNCOMPARED
+            self.rows.append(_row(f"cron:{job_id}", "cron_new" if old is None else "cron_changed", "Cron job", name,
+                                  detail, state=state, job=job_id, can_restore=old is None or bool(was.get("copy"))))
 
     def _files(self) -> None:
         cut = set(self.incomplete)
         for key in sorted(set(self.before) | set(self.now)):
-            rel, was = self.before.get(key, (None, _ABSENT))
-            now_rel, now = self.now.get(key, (None, _ABSENT))
-            rel, known = rel or now_rel, was if was is not _ABSENT else now
-            same_link = was["type"] == "link" and was.get("link") == now.get("link")
-            if now["type"] == "link" and now.get("outside") and not same_link:
-                self.rows.append(_row(f"link:{rel}", "link_outside", "Link", rel, "points outside the profile",
-                                      state=now.get("link"), rel=rel, target=now.get("link")))
-                continue
-            store = bool(was.get("store") or now.get("store"))
-            if rel in (CONFIG, JOBS) or not known.get("tier"):
-                continue  # the two shared files have their own rows; elsewhere only a link leading out counts
-            if key.split("/")[0] in self.scan.host_written:
-                continue  # the sandbox cannot write there (a record taken by an older version still names them)
-            if not store and "dir" in (was["type"], now["type"]) and (was["type"] == now["type"] or _ABSENT in (was, now)):
-                continue  # a folder that is there, came or went: its files are the rows
-            if was is not _ABSENT and now is not _ABSENT and _same(was, now):
-                continue
-            what = "new" if was is _ABSENT else "removed" if now is _ABSENT else "changed"
-            if rel.split("/")[0] in cut and what != "changed":
-                continue  # the listing did not finish there: only what both looks saw is compared
-            state = _file_row_state(now)
-            if store:
-                # Beta decision: every credential store that changed is a row that is always reverted (``fixed``),
-                # the sign-in store (auth.json) included, although only the env files have a pinned copy to come
-                # back from: a replaced store is moved to the held folder and the user signs in again; a removed
-                # one cannot be brought back. Where the sandbox cannot write these files at all (Linux masks
-                # them) such a change came from a host process. To treat them otherwise, change this branch (or
-                # pin the store beside the env files).
-                folder = "dir" in (was["type"], now["type"])
-                label = "Env file" if rel in ENV_FILES else "Credential folder" if folder else "Credential file"
-                word = {"new": "created", "changed": "replaced", "removed": "removed"}[what]
-                self.rows.append(_row(f"env:{rel}", f"env_{word}", label, rel, word, fixed=True, state=state, rel=rel,
-                                      can_restore=what == "new"))
-            elif known["tier"] == 1:
-                label = ("Program file" if known.get("ref") else "Hook approvals" if rel == ALLOWLIST
-                         else TIER1_TREES.get(rel.split("/")[0], "File"))
-                self.rows.append(_row(f"file:{rel}", f"file_{what}", label, rel, what, state=state, rel=rel,
-                                      can_restore=what == "new" or bool(was.get("copy"))))
-            else:
-                label = TIER2_FILES.get(rel) or TIER2_TREES.get(rel.split("/")[0], "File")
-                self.items.append(_row(f"t2:{rel}", f"file_{what}", label, rel, what, tier=2, state=state, rel=rel,
-                                       can_restore=what == "new"))
+            try:
+                self._file(key, cut)
+            except Exception:  # what was recorded of this one file cannot be compared: a row, and the others go on
+                rel, was = self.before.get(key) or self.now[key]
+                self.rows.append(_row(f"file:{rel}", "file_changed", "File", rel, UNCOMPARED, state=[rel], rel=rel,
+                                      can_restore=bool(was.get("copy"))))
+        for root in TIER1_TREES:
+            if root in cut and self.home.fold(root) not in self.scan.host_written:
+                # More files than one listing takes: the files both looks saw are compared above, the rest is
+                # this row. A revert moves out every file of the folder that the record does not have.
+                self.rows.append(_row(f"folder:{root}", "folder_cut", "Folder", root, "too many files to compare",
+                                      state=[root, "cut"], rel=root))
+
+    def _file(self, key: str, cut: set) -> None:
+        rel, was = self.before.get(key, (None, _ABSENT))
+        now_rel, now = self.now.get(key, (None, _ABSENT))
+        rel, known = rel or now_rel, was if was is not _ABSENT else now
+        same_link = was["type"] == "link" and was.get("link") == now.get("link")
+        if now["type"] == "link" and now.get("outside") and not same_link:
+            self.rows.append(_row(f"link:{rel}", "link_outside", "Link", rel, "points outside the profile",
+                                  state=now.get("link"), rel=rel, target=now.get("link")))
+            return
+        store = bool(was.get("store") or now.get("store"))
+        if rel in (CONFIG, JOBS) or not known.get("tier"):
+            return  # the two shared files have their own rows; elsewhere only a link leading out counts
+        if key.split("/")[0] in self.scan.host_written:
+            return  # the sandbox cannot write there, whether or not the record names them
+        if not store and "dir" in (was["type"], now["type"]) and (was["type"] == now["type"] or _ABSENT in (was, now)):
+            return  # a folder that is there, came or went: its files are the rows
+        if was is not _ABSENT and now is not _ABSENT and _same(was, now):
+            return
+        what = "new" if was is _ABSENT else "removed" if now is _ABSENT else "changed"
+        if rel.split("/")[0] in cut and what != "changed":
+            return  # the listing did not finish there: only what both looks saw is compared
+        state = _file_row_state(now)
+        if store:
+            # Beta decision: every credential store that changed is a row that is always reverted (``fixed``),
+            # the sign-in store (auth.json) included, although only the env files have a pinned copy to come
+            # back from: a replaced store is moved to the held folder and the user signs in again; a removed
+            # one cannot be brought back. Where the sandbox cannot write these files at all (Linux masks
+            # them) such a change came from a host process. To treat them otherwise, change this branch (or
+            # pin the store beside the env files).
+            folder = "dir" in (was["type"], now["type"])
+            label = "Env file" if rel in ENV_FILES else "Credential folder" if folder else "Credential file"
+            word = {"new": "created", "changed": "replaced", "removed": "removed"}[what]
+            self.rows.append(_row(f"env:{rel}", f"env_{word}", label, rel, word, fixed=True, state=state, rel=rel,
+                                  can_restore=what == "new"))
+        elif known["tier"] == 1:
+            label = ("Program file" if known.get("ref") else "Hook approvals" if rel == ALLOWLIST
+                     else TIER1_TREES.get(rel.split("/")[0], "File"))
+            self.rows.append(_row(f"file:{rel}", f"file_{what}", label, rel, what, state=state, rel=rel,
+                                  can_restore=what == "new" or bool(was.get("copy"))))
+        else:
+            label = TIER2_FILES.get(rel) or TIER2_TREES.get(rel.split("/")[0], "File")
+            self.items.append(_row(f"t2:{rel}", f"file_{what}", label, rel, what, tier=2, state=state, rel=rel,
+                                   can_restore=what == "new"))
 
     def tier2(self) -> dict:
         known, skills = set(self.before) | set(self.now), set()
@@ -1201,8 +1303,9 @@ def keep(home, state_dir, row_ids="all", *, seen: Optional[dict] = None) -> dict
 # -- revert -----------------------------------------------------------------------------------------
 
 class _Revert:
-    def __init__(self, found: _Diff, skipped: list[dict]):
+    def __init__(self, found: _Diff, skipped: list[dict], stop: Optional[threading.Event] = None):
         self.found, self.home, self.store, self.skipped = found, found.home, found.store, skipped
+        self.stop = stop
         self.dir: Optional[Path] = None
         self.index: list[dict] = []
         self.results: dict[str, dict] = {}
@@ -1218,6 +1321,11 @@ class _Revert:
             self.dir = _private_dir(root, name if n == 1 else f"{name}-{n}")
         return self.dir
 
+    def _go(self) -> None:
+        """Called before each change to the home: once the caller stopped waiting, nothing more is changed."""
+        if self.stop is not None and self.stop.is_set():
+            raise _Stopped()
+
     def _hold(self, rel: str) -> Optional[str]:
         """Move what is at *rel* out of the home into the held folder; a link is removed, never moved or read.
         Returns where it went, relative to the held folder."""
@@ -1225,6 +1333,7 @@ class _Revert:
         kind = _kind_at(path)
         if kind == "absent":
             return None
+        self._go()
         if kind == "link":
             try:
                 os.unlink(path)
@@ -1260,6 +1369,7 @@ class _Revert:
         data = _read_bytes(self.store / "base" / base_rel) if entry.get("copy") else b""
         if not entry.get("copy") or hashlib.sha256(data).hexdigest() != entry.get("sha256"):
             return False
+        self._go()
         parts = base_rel.split("/")[:-1]
         for n in range(1, len(parts) + 1):
             folder = self.home.actual("/".join(parts[:n]))
@@ -1323,6 +1433,38 @@ class _Revert:
             return self._skip(row, "not changed" if was is _ABSENT else "no copy to restore", left=False)
         self._done(row, "restored" if put_back else "held", put_back or was is _ABSENT, held=held, link=link)
 
+    def folder(self, row: dict) -> None:
+        """A folder with more files than one listing takes. Every file and folder in it that the record does not
+        have is moved out (a look by name: it needs no limit), and every file a copy was kept of that is gone or
+        changed comes back. When the listing was already cut short at switch-on, new files cannot be told from the
+        profile's own: only the copies come back, and the answer names the folder as left."""
+        root = row["_rel"]
+        if not self.home.plain_parents(root) or _kind_at(self.home.actual(root)) == "link":
+            return self._skip(row, "a link is in the way")
+        whole = root not in (self.found.base.get("incomplete") or [])
+        stack, moved = [(self.home.actual(root), root)] if whole else [], False
+        while stack:
+            folder, rel = stack.pop()
+            for name, st in _listing(folder):
+                child = f"{rel}/{name}"
+                if self.home.fold(child) not in self.found.before:
+                    self._hold(child)
+                    moved = True
+                elif _kind(st) == "dir":
+                    stack.append((os.path.join(folder, name), child))
+        prefix = self.home.fold(root) + "/"
+        for key, (base_rel, entry) in sorted(self.found.before.items()):
+            if key.startswith(prefix) and entry.get("copy"):
+                current = self.home.entry(self.home.actual(base_rel))[0]
+                if current is None or not _same(entry, current):
+                    self._hold(base_rel)
+                    self._restore(base_rel)
+        if not whole:
+            self.unreverted.append(row["id"])
+            return self._skip(row, "more files at switch-on than one listing takes: new files are not told apart",
+                              left=False)
+        self._done(row, "restored", True, held=f"files/{root}" if moved else None)
+
     def config_keys(self, rows: list[dict]) -> None:
         path = self.home.actual(CONFIG)
         if not rows:
@@ -1342,6 +1484,7 @@ class _Revert:
             # that copy, byte for byte (the editor alone would keep an empty line or a comment the sandbox's
             # block came with).
             text = base
+        self._go()
         _private_dir(self._held(), "files")
         _write(self._held() / "files" / CONFIG, current or b"")  # the sandbox's whole file, as it was
         _write(path, text, stat.S_IMODE(os.lstat(path).st_mode))
@@ -1358,13 +1501,13 @@ class _Revert:
         doc, jobs = parsed
         base = _parse_jobs(_read_bytes(self.store / "base" / JOBS))
         before = {_job_id(job, n): job for n, job in enumerate(base[1])} if base else {}
-        wanted, kept = {row["_job"]: row for row in rows}, []
+        wanted, kept, done = {row["_job"]: row for row in rows}, [], []
         for index, job in enumerate(jobs):
             row, old = wanted.get(_job_id(job, index)), before.get(_job_id(job, index))
             if row is None:
                 kept.append(job)
             elif row["kind"] == "cron_new":
-                self._done(row, "removed", True, job=job)
+                done.append((row, "removed", job))
             elif old is None:
                 kept.append(job)
                 self._skip(row, "no copy to restore")
@@ -1379,23 +1522,31 @@ class _Revert:
                     else:
                         job.pop(field, None)
                 kept.append(job)
-                self._done(row, "restored", True, job=theirs)
+                done.append((row, "restored", theirs))
         if isinstance(doc, dict):
             doc["jobs"] = kept
+        self._go()
         if not kept and self.home.fold(JOBS) not in self.found.before:
             os.unlink(path)  # there was no jobs file at switch-on and no job is left: no file again
-            return
-        _write(path, json.dumps(doc if isinstance(doc, dict) else kept, indent=2, ensure_ascii=False).encode("utf-8"),
-               stat.S_IMODE(os.lstat(path).st_mode))
+        else:
+            whole = doc if isinstance(doc, dict) else kept
+            try:
+                data = json.dumps(whole, indent=2, ensure_ascii=False).encode("utf-8")
+            except UnicodeEncodeError:  # half of a surrogate pair in some value: written escaped, as it was read
+                data = json.dumps(whole, indent=2).encode("ascii")
+            _write(path, data, stat.S_IMODE(os.lstat(path).st_mode))
+        for row, action, theirs in done:  # reported once the file is written
+            self._done(row, action, True, job=theirs)
 
     def _try(self, call, rows) -> None:
-        """Run one step; a file that cannot be moved or written (held open, read-only) skips its rows and leaves
-        the other steps to go on."""
+        """Run one step; one that fails (a file held open or read-only, a value that cannot be written back) or
+        that the caller stopped waiting for skips its rows and leaves the other steps to go on."""
         try:
             call(rows)
-        except OSError as exc:
-            todo = [row for row in (rows if isinstance(rows, list) else [rows]) if row["id"] not in self.results]
-            self._skip(todo, f"could not be changed ({exc.__class__.__name__})")
+        except Exception as exc:
+            rest = [row for row in (rows if isinstance(rows, list) else [rows]) if row["id"] not in self.results]
+            self._skip(rest, NOT_REACHED if isinstance(exc, _Stopped)
+                       else f"could not be changed ({exc.__class__.__name__})")
 
     def run(self, rows: list[dict]) -> dict:
         def of(*prefixes):
@@ -1407,17 +1558,20 @@ class _Revert:
             self._try(self.file, row)
         self._try(self.config_keys, of("config_added", "config_changed", "config_removed"))
         self._try(self.cron_jobs, of("cron_new", "cron_changed"))
+        for row in of("folder_"):
+            self._try(self.folder, row)
         order = [row["id"] for row in rows]
         reverted = [i for i in order if i in self.results]
         if reverted:
-            self.index.sort(key=lambda item: order.index(item["id"]))
+            place = {row_id: n for n, row_id in enumerate(order)}
+            self.index.sort(key=lambda item: place[item["id"]])
             _write_json(self._held() / "held.json", {"at": _stamp(), "rows": self.index})
         return {"open": True, "reverted": reverted, "skipped": self.skipped, "left": sorted(self.left),
                 **({"unreverted": sorted(self.unreverted)} if self.unreverted else {}),
                 "held": str(self.dir) if self.dir is not None else None, "results": [self.results[i] for i in reverted]}
 
 
-def revert(home, state_dir, row_ids="all") -> dict:
+def revert(home, state_dir, row_ids="all", *, stop: Optional[threading.Event] = None) -> dict:
     """Put the baseline back for the rows named: ids, ``"all"`` (every Tier 1 row), ``"unanswered"`` (those
     without a ``keep``) or ``"fixed"`` (those that are never offered: env files and credential stores). The
     sandbox's version of each goes to ``handback/held/<time>/`` with an index (``held.json``). A row that no
@@ -1427,12 +1581,54 @@ def revert(home, state_dir, row_ids="all") -> dict:
     touched only when named, and only a new file can be held: no copy of the others was kept. ``left`` names the
     Tier 1 rows asked for whose sandbox version is still in the home afterwards: with any, the profile is not
     ready to be handed back. ``unreverted`` (only when there are any) names the rows that were left on purpose:
-    the profile's own file, changed, with no copy to put back (``NO_COPY_REVERT``); they hold nothing up."""
+    the profile's own file, changed, with no copy to put back (``NO_COPY_REVERT``); they hold nothing up.
+    Once *stop* is set nothing more is changed in the home: the rows not reached are skipped and in ``left``."""
     found = _Diff(home, state_dir)
     if not found.open:
         return {"open": False, "reverted": [], "skipped": [], "left": [], "held": None, "results": []}
     rows, skipped = found.select(row_ids)
-    return _Revert(found, skipped).run(rows)
+    return _Revert(found, skipped, stop).run(rows)
+
+
+def revert_from_copies(home, state_dir, *, stop: Optional[threading.Event] = None) -> dict:
+    """A revert when the list cannot be made (the look at the whole home fails or does not come back). It needs
+    no such look: every file a copy was kept of at switch-on (config.yaml and cron/jobs.json whole, the hook
+    approvals, scripts, hook files, the programs entries name) that is gone or differs from that copy is put back,
+    and every file in ``scripts`` and ``hooks`` that the record does not have is moved out. The answer has the
+    shape of ``revert``'s, one ``file:``, ``cfgfile:`` or ``cronfile:`` row per file. What only the full look finds
+    stays as it is: a link that leads out of the home, a changed file no copy was kept of, the text the agent
+    reads; the baseline is left open for a later review."""
+    found = _Diff(home, state_dir, listed=False)
+    if not found.open:
+        return {"open": False, "reverted": [], "skipped": [], "left": [], "held": None, "results": []}
+    return _Revert(found, [], stop).run(list(found.rows))
+
+
+def revert_within(seconds: float, home, state_dir, row_ids="all", *, from_copies: bool = False) -> dict:
+    """``revert`` (``revert_from_copies`` with *from_copies*), waited for *seconds* at most. A step that is late is
+    told to stop: it changes nothing more in the home and names the rows it did not reach in ``left``, and its
+    answer is waited for ``STOP_GRACE`` seconds longer (the one write that was under way). ``TimeoutError`` when
+    it still does not come back; it writes nothing after that either."""
+    stop, box = threading.Event(), {}
+
+    def run() -> None:
+        try:
+            box["value"] = (revert_from_copies(home, state_dir, stop=stop) if from_copies
+                            else revert(home, state_dir, row_ids, stop=stop))
+        except BaseException as exc:  # handed to the caller below
+            box["error"] = exc
+
+    worker = threading.Thread(target=run, name="openshell-handback-revert", daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        stop.set()
+        worker.join(STOP_GRACE)
+    if worker.is_alive():
+        raise TimeoutError(f"took longer than {seconds:g} seconds")
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
 
 
 # -- what the user kept ------------------------------------------------------------------------------
@@ -1471,7 +1667,7 @@ def _kept_in_home(home, items: list) -> list[dict]:
             continue
         try:
             now = _state_now(where, item, doc, parsed[1] if parsed else None)
-        except (OSError, ValueError):
+        except Exception:  # its state cannot be read: the item stays
             now = None
         if now is None or now == item.get("state"):
             out.append(item)

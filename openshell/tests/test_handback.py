@@ -1370,7 +1370,8 @@ def test_a_folder_with_more_entries_than_the_bound_is_cut_and_said_so(box, monke
     result = H.take_baseline(home, state)
     assert result["incomplete"] == ["skills"]
     base = json.loads((state / "handback" / "baseline.json").read_text(encoding="utf-8"))
-    assert len(base["manifest"]) <= 40 + 12  # the cut is on the listing, not on the single files named by path
+    listed = [rel for rel in base["manifest"] if rel.startswith("skills/")]
+    assert len(listed) == 40  # the cut is on that folder's listing: every watched folder has a limit of its own
     assert base["manifest"]["scripts/backup.sh"]["tier"] == 1  # Tier 1 is walked first
     result = H.diff(home, state)
     assert result["incomplete"] == ["skills"] and result["rows"] == []
