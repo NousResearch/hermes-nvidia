@@ -257,10 +257,12 @@ def test_a_successful_calls_output_stays_data_for_paths_its_command_did_not_name
         assert relayed(monkeypatch, name, args, result) == [], (name, args)
 
 
-def test_a_command_that_succeeded_is_asked_for_two_folders_at_most(monkeypatch):
-    folders = [f"{HOME}/{name}" for name in ("Desktop", "Downloads", "Pictures")]
+def test_a_command_that_succeeded_is_asked_for_four_folders_at_most(monkeypatch):
+    """The hook relays as many refused folders as the launcher reads of one request. The launcher leaves out those
+    the sandbox already has and raises two cards at most."""
+    folders = [f"{HOME}/{name}" for name in ("Desktop", "Downloads", "Pictures", "Music", "Videos")]
     args = {"command": "; ".join(f'ls "{folder}"' for folder in folders) + f'; ls "{PROFILE}"'}
     result = {"output": "".join(f"ls: {folder}: Permission denied\n" for folder in folders) + "config.yaml\n",
               "exit_code": 0}
     [request] = relayed(monkeypatch, "terminal", args, result)
-    assert asked_for(request) == [(str(Path(folder)), "read") for folder in folders[:2]]
+    assert asked_for(request) == [(str(Path(folder)), "read") for folder in folders[:4]]

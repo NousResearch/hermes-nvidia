@@ -106,7 +106,7 @@ from typing import Optional
 from . import categories
 from .refusals import (DENIED_RE as _DENIED_RE, MISSING_RE as _MISSING_RE, WRITE_TOOLS as _WRITE_TOOLS,  # noqa: F401
                        CANDIDATE, KEYLESS_WEB_HOSTS, ZERO_WAIT_SKEW, card_host, denied_in_events, failed_result,
-                       host_path, refused_between, refused_paths)
+                       host_path, refused_accesses, refused_between, refused_paths)
 from .verdicts import FINAL, Verdicts, dir_key, net_key, read_requests
 
 log = logging.getLogger("openshell.cards")
@@ -481,6 +481,17 @@ def _on_host(path: Path, access: str) -> bool:
     """Whether the host has what a refusal names: the path itself or, for a refused write, the folder a new file
     or folder goes into."""
     return path.exists() or (access == "read_write" and path.parent.is_dir())
+
+
+def _host_reads(path: Path) -> bool:
+    """Whether the host's user can read *path*, or the nearest existing folder above a path that does not exist
+    yet. A path that user cannot read is refused to the sandbox whatever folders it has."""
+    try:
+        while not path.exists() and path.parent != path:
+            path = path.parent
+        return os.access(path, os.R_OK)
+    except (OSError, ValueError):
+        return False
 
 
 def _leaf(binary: str) -> str:
@@ -1327,12 +1338,16 @@ class Cards:
         return None
 
     async def raise_access(self, path: str, access: str, *, key: Optional[str] = None, origin: str = "refusal",
-                           missing: bool = False, must_exist: bool = False) -> tuple[int, dict]:
+                           missing: bool = False, must_exist: bool = False,
+                           assumed: bool = False) -> tuple[int, dict]:
         """A folder card for *path* (a refused file or folder). Checked on the host: the nearest existing
         folder, by Add folder's rules, not a credential path, not already granted. *missing*: the tool said "no
         such file", so there is a card only when the host has the path. *must_exist*: the call did not fail and
         only its own text says the path was refused, so there is a card only when the host has the path (for a
-        refused write, the folder it goes into); a path the host lacks never asks for a folder above it."""
+        refused write, the folder it goes into); a path the host lacks never asks for a folder above it.
+        *assumed*: a failed call was denied the path and nothing showed what it did there, so *access* is the
+        least it needs; when the sandbox can already read the path and the host's user can read it too, a write
+        was refused and the card asks for read & write."""
         from .layout import LayoutError, on_this_computer
         from .spec import folder_from_entry
 
@@ -1349,6 +1364,8 @@ class Cards:
             self._record({"event": "not carded", "origin": origin, "path": str(path), "detail": detail})
             return 204, {"detail": detail}
         p = Path(path)
+        if assumed and self._covered(p, "read") and not self._covered(p, "read_write") and _host_reads(p):
+            access = "read_write"
         if missing and not p.exists():
             return 204, {"detail": "not on the host"}
         if must_exist and not _on_host(p, access):
@@ -1477,7 +1494,8 @@ class Cards:
                     break
                 status, payload = await self.raise_access(item["path"], item["access"], key=key, origin="hook",
                                                           missing=item["missing"],
-                                                          must_exist=bool(request.get("succeeded")))
+                                                          must_exist=bool(request.get("succeeded")),
+                                                          assumed=bool(item.get("assumed")))
                 if status == 200 and payload.get("path"):
                     keys.append(dir_key(payload["path"]))
                     raised += 1
@@ -2730,7 +2748,7 @@ class Cards:
         # is asked only for one the host has (``raise_access``).
         status = "error" if payload.get("is_error") is True else None
         name = str(payload.get("name") or "")
-        found = refused_paths(name, args, result, status=status)
+        found = refused_accesses(name, args, result, status=status)
         if not found:
             return
         must_exist = not failed_result(name, result, status)
@@ -2738,11 +2756,11 @@ class Cards:
 
         async def raise_all():
             raised = 0
-            for path, access, missing in found:
+            for path, access, missing, assumed in found:
                 if raised >= MAX_ACCESS_CARDS_PER_RESULT:
                     break
                 status, _ = await self.raise_access(str(path), access, key=key, origin="tool.complete",
-                                                    missing=missing, must_exist=must_exist)
+                                                    missing=missing, must_exist=must_exist, assumed=assumed)
                 raised += status == 200
 
         try:

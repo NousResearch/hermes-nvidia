@@ -153,6 +153,27 @@ A relative path, `~`, a variable or a path that only a script names raises no ca
 a line that says only "No such file or directory". The agent reads the refusal in the command's
 output.
 
+### A write from a script or from code is asked for in two cards
+
+When a script, a variable or code the agent runs is refused a write, the refusal does not say that
+it was a write. The first **Folder access** card asks for **Read only**. The agent's next try
+fails again, and a second card asks for **Read and write**. Each Allow restarts the sandbox.
+
+The second card comes only for a call that failed. Code that catches the error and ends normally
+raises none. A file that your own account cannot read raises none either.
+
+### A very long command or result is read in part
+
+The plugin reads the first 32,768 characters of a command to see what it does to each path.
+A path that a longer command writes after that point is asked for as **Read only** first.
+
+A path that a call names after its first 262,144 characters, or after its first 4,096 paths, raises
+no card when the call did not fail.
+
+Of a result, the plugin reads the first 32,768 characters of the lines that say a path was refused.
+A path refused after that point raises no card and has no row in the Activity log.
+A single line longer than that is not read.
+
 ### Windows: a program that connects without the proxy
 
 A program that connects directly, without the sandbox's proxy, is refused and leaves no record.

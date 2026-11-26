@@ -40,6 +40,11 @@ code named (``refusals.named_refusals``). The request is marked ``succeeded``: t
 for a path the host has outside the sandbox's grants, and the call is held on the card like a failed one. Text such
 a call prints about any other path is data.
 
+A refused path is relayed with the access it needs itself (``refusals.refused_paths``): a write to another path in
+the same command asks for no more. Where a failed call does not show what it did to the path (a script, a variable,
+code), the path is relayed to read and marked ``assumed``: the launcher asks for read & write when the sandbox can
+already read it.
+
 The wait stays under core's hook timeout (``plugins.hook_callback_timeout``; a callback that times out
 is abandoned and suppressed for a minute): ``min(HERMES_SANDBOX_CARD_WAIT, timeout - 10 s)``. The
 launcher raises that timeout for the sandboxed backend in its managed scope so the default 120 s wait
@@ -58,7 +63,7 @@ from typing import Optional
 from .launcher import categories
 from .launcher.refusals import (CANDIDATE, NAMED_SCAN, PROGRAM_TOOLS, RECORD_POLL, RECORD_SETTLE_MAX,
                                 RECORD_SETTLE_SHOWN, ZERO_WAIT_SKEW, candidate_destinations, failed_result,
-                                maybe_refused, named_destinations, refused_destinations, refused_paths,
+                                maybe_refused, named_destinations, refused_accesses, refused_destinations,
                                 shows_network_refusal)
 from .launcher.verdicts import END_REPLY, FINAL, VERDICTS_FILE
 
@@ -76,6 +81,7 @@ MARGIN = 10.0       # stay this far under core's hook timeout
 ACK_WAIT = 8.0      # the launcher answers a request within about a second; silence means no launcher cards
 POLL = 0.4
 HOOK_TIMEOUT_PIN = 135  # what the launcher pins plugins.hook_callback_timeout to (DEFAULT_WAIT + margin)
+RELAYED_PATHS = 4   # how many paths of one request the launcher reads (verdicts.parse_request)
 
 
 def active() -> bool:
@@ -128,15 +134,18 @@ def resolve(tool_name: str, args, result, *, session_id: str = "", duration_ms=N
         return None
     args = args if isinstance(args, dict) else {}
     requests = []
-    paths = [(p, a, m) for p, a, m in refused_paths(tool_name, args, result, status=status)[:2]
-             if not (m and _visible_parent(p))] if refused else []
+    # The refused paths in the order the result names them, as many as the launcher reads of one request. The
+    # launcher leaves out those the sandbox already has and raises two cards at most.
+    paths = [found for found in refused_accesses(tool_name, args, result, status=status)
+             if not (found[2] and _visible_parent(found[0]))][:RELAYED_PATHS] if refused else []
     started = ended - (float(duration_ms) / 1000.0 if isinstance(duration_ms, (int, float)) else 0.0)
     base = {"session_id": session_id or None, "tool": tool_name or None, "t": started}
     if paths:
         # A call that did not fail is marked: its paths come from what it printed about paths it named, and the
-        # launcher asks only for one the host has.
+        # launcher asks only for one the host has. A path whose access is assumed is marked too.
         requests.append({**base, "kind": "access",
-                         "paths": [{"path": str(p), "access": a, "missing": m} for p, a, m in paths],
+                         "paths": [{"path": str(p), "access": a, "missing": m,
+                                    **({"assumed": True} if assumed else {})} for p, a, m, assumed in paths],
                          **({} if failed_result(tool_name, result, status) else {"succeeded": True})})
     hosts, strength = refused_destinations(tool_name, args, result, status=status) if refused else ([], None)
     unsaid = False

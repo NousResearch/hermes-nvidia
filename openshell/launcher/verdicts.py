@@ -223,8 +223,10 @@ def parse_request(rid: str, raw: bytes) -> Optional[dict]:
                 continue
             if not names_local_path(item["path"]):
                 continue  # the sandbox wrote this: a path named any other way is never opened, and gets no card
+            # ``assumed``: nothing showed what a failed call did to the path (``Cards.raise_access``).
             paths.append({"path": item["path"], "access": "read_write" if item.get("access") == "read_write" else "read",
-                          "missing": bool(item.get("missing"))})
+                          "missing": bool(item.get("missing")),
+                          **({"assumed": True} if item.get("assumed") is True else {})})
         if not paths:
             return None
         out["paths"] = paths

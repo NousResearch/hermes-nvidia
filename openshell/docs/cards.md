@@ -24,6 +24,19 @@ refused. Such a command raises the **Folder access** card when both of these hol
 The same holds for code the agent runs that catches the error and prints it.
 Any other path in the output of a command that did not fail is text and raises no card.
 
+A **Folder access** card asks for the access the refused path needs:
+
+- **Read and write** when the refusal says that a write was refused, or when the command writes to
+  that path.
+- **Read only** in every other case. A write to another path in the same command changes nothing.
+
+A script, a variable or code the agent runs does not show what it did with the path.
+The card then asks for **Read only**.
+If a call then fails on the same path while the sandbox can read it, a second card asks for
+**Read and write**.
+
+A file that your own account cannot read gets no second card.
+
 ## Answer a card
 
 | Answer | What it does |
