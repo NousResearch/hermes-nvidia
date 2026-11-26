@@ -149,8 +149,10 @@ def test_windows_service_errors_name_the_step(defn):
         task.install()
 
 
-def test_systemd_user_unit_and_commands(defn, tmp_path):
+def test_systemd_user_unit_and_commands(defn, tmp_path, monkeypatch):
     rec = Recorder({("systemctl", "--user", "is-active"): (0, "active\n")})
+    # Removing a unit first asks systemd whether this process is the unit's own, through a runner of its own.
+    monkeypatch.setattr(LS, "running_inside_unit", lambda unit: False)
     unit = LS.SystemdUser(defn, rec, unit_dir=tmp_path / "units")
     unit.install()
     text = unit.unit_path.read_text(encoding="utf-8")

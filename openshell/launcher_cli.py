@@ -18,6 +18,11 @@ once the driver passes preflight.
 ``on`` / ``off`` flip the Sandbox switch from a terminal (the desktop's Sandbox page does the same and
 also points the desktop at the launcher): ``on`` runs ``serve --service`` as a per-user login service
 and marks the profile as run elsewhere; ``off`` undoes both, the marker last (see launcher/switch.py).
+An ``on`` that is told to end before it has marked the profile (Ctrl+C, a closed terminal, SIGTERM) takes
+itself back. The login service runs a sandbox only for a profile that is marked or that an ``on`` or the
+desktop is still turning on: for any other it ends the sandbox and removes itself. What the sandbox of a switch-on
+that never finished changed is put back; what the sandbox of a profile that was switched on changed stays, and
+the next ``on`` lists it and asks.
 ``off`` first compares the profile's folder with what it held when the sandbox was switched on
 (launcher/handback.py). When the sandbox changed settings or files that run on this computer, ``off``
 prints them, changes nothing and exits 3; run it again with ``--revert`` (put them back; the sandbox's
@@ -42,6 +47,7 @@ with ``--wxc-exec`` / ``--busybox`` or with ``OPENSHELL_WXC_EXEC_PATH`` / ``OPEN
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -171,6 +177,16 @@ def _cmd_serve(args) -> int:
                 print(f"hermes sandbox: the sandbox switch is off for profile '{layout.name}'; not starting.",
                       flush=True)
                 return 0
+            from .launcher.switch import cut_off, end_cut_off
+
+            if cut_off(layout):
+                # The profile is not marked, and nobody is turning its sandbox on: Hermes on this computer runs
+                # the profile, so no sandbox starts beside it. A sandbox the last launcher left running is
+                # ended and the service removed; the home is put back only for a switch-on that never finished.
+                print(f"hermes sandbox: {_why_cut_off(layout)}; not starting.", flush=True)
+                print(_ENDED[end_cut_off(layout, lambda: _leftover_ended(layout))].format(
+                    name=layout.name, profile=_profile_flag(layout)), end="", flush=True)
+                return 0
         first_run = not layout.spec_path.exists()
         spec = load_spec(layout)
         if args.folder is not None:
@@ -226,6 +242,79 @@ def _cmd_serve(args) -> int:
     finally:
         if own_pin:  # the sandbox and the proxy are down by now
             _own_switch_off(layout)
+
+
+# What the launcher says once ``end_cut_off`` has answered: nothing more when the switch-on was taken back.
+_ENDED = {
+    "undone": "",
+    "review": "hermes sandbox: the sandbox of profile '{name}' is off. The next switch-on lists what it changed.\n",
+    None: ("hermes sandbox: the sandbox of profile '{name}' could not be ended; the profile stays marked. "
+           "Run `hermes{profile} sandbox off`.\n"),
+}
+
+
+def _why_cut_off(layout) -> str:
+    """Why the launcher keeps no sandbox for this profile: a switch-on that left its record never finished;
+    without a record the profile was switched on and its marker is gone."""
+    from .launcher.switch import start_recorded
+
+    if start_recorded(layout):
+        return f"the switch-on of profile '{layout.name}' did not finish"
+    return f"profile '{layout.name}' is not marked as run elsewhere"
+
+
+def _profile_flag(layout) -> str:
+    return "" if layout.name == "default" else f" -p {layout.name}"
+
+
+def _leftover_ended(layout) -> bool:
+    """Before a switch-on that was cut off is taken back at the launcher's start: a sandbox the last launcher
+    left running is ended. Raises when that cannot be done."""
+    from .launcher.spec import load_spec
+    from .launcher.switch import drop_leftover
+
+    drop_leftover(layout, make_driver(load_spec(layout)))
+    return True
+
+
+async def _end_when_cut_off(layout, sup, request_stop) -> None:
+    """A login service's launcher keeps its sandbox only for a profile that is marked or whose switch-on is still
+    under way (launcher/switch.py ``cut_off``). It looks as often as ``Supervisor.watch`` does. When neither
+    holds, the process that was turning the sandbox on has ended before it marked the profile, or the marker of
+    a profile that was switched on is gone: the launcher marks the profile, ends the sandbox (a start under way
+    gives up), removes its service, clears the marker and ends (``end_cut_off``, which also says what happens
+    to the home). A sandbox that cannot be ended stays, with its profile marked.
+
+    At each look it also removes a start record that is proven stale (``forget_finished_start``): the profile is
+    marked and no switch-on is under way. The switch-on that reached its mark could not remove it (another
+    program held the file), and ``end_cut_off`` takes a record for a switch-on that never finished: left in
+    place, it would have the home put back without a list if the marker were lost later. The record of a
+    switch-on that is under way is that switch-on's own and is never touched."""
+    import asyncio
+
+    from .launcher import supervisor
+    from .launcher.switch import cut_off, end_cut_off, forget_finished_start
+
+    loop = asyncio.get_running_loop()
+    while sup.switching_off or not cut_off(layout):
+        if not sup.switching_off:
+            forget_finished_start(layout)
+        await asyncio.sleep(supervisor.WATCH_INTERVAL)
+    print(f"hermes sandbox: {_why_cut_off(layout)}; ending its sandbox.", file=sys.stderr, flush=True)
+    sup.switching_off = True  # the status says so: a switch-on that comes meanwhile waits for this launcher to end
+
+    def end_sandbox() -> bool:
+        sup.abandon_start = True
+        asyncio.run_coroutine_threadsafe(sup.stop(), loop).result()
+        gone = getattr(sup.driver, "sandbox_gone", None)
+        return bool(gone()) if callable(gone) else True
+
+    done = await asyncio.to_thread(end_cut_off, layout, end_sandbox, runtime=sup.runtime)
+    print(_ENDED[done].format(name=layout.name, profile=_profile_flag(layout)), end="", file=sys.stderr, flush=True)
+    if done is None:
+        sup.switching_off = sup.abandon_start = False
+        return
+    request_stop()
 
 
 def _own_switch_on(layout, answer, driver=None) -> int:
@@ -382,6 +471,8 @@ async def _serve(layout, spec, driver, token: str, service: bool = False, own_pi
     sup.write_state()
     watcher = asyncio.create_task(sup.watch())
     orphan_watch = asyncio.create_task(_stop_when_redirector_exits(stop))
+    # A foreground serve never marks its profile and is nobody's switch-on: only a login service is followed.
+    owner_watch = asyncio.create_task(_end_when_cut_off(layout, sup, stop.set)) if service else None
     cards.start()
     activity.start()
     try:
@@ -402,6 +493,8 @@ async def _serve(layout, spec, driver, token: str, service: bool = False, own_pi
     finally:
         watcher.cancel()
         orphan_watch.cancel()
+        if owner_watch is not None:
+            owner_watch.cancel()
         await cards.stop()
         server.close()
         await sup.stop()
@@ -585,12 +678,18 @@ def _cmd_on(args) -> int:
     from .launcher.switch import HandbackNeeded, SwitchError, turn_on
 
     answer = getattr(args, "handback_answer", None)
+    ended: list = []
     try:
         layout = current_profile()
         _check_profile_name(layout)
         if getattr(args, "move_keys", False):
             _move_keys(layout)
-        result = turn_on(layout, handback_answer=answer)
+        with _ended_like_ctrl_c(ended):
+            result = turn_on(layout, handback_answer=answer)
+    except KeyboardInterrupt:
+        if not ended:
+            raise
+        return _interrupted(layout, ended[0])
     except HandbackNeeded as exc:  # exit 3 means only: an answer is needed, nothing was changed
         print(_handback_list(layout.name, exc.view))
         print(f"hermes sandbox: {exc} Run again with --revert or --keep.", file=sys.stderr)
@@ -608,6 +707,52 @@ def _cmd_on(args) -> int:
     if result.get("note"):  # the sandbox is on; this is what its first message would run into
         print(f"hermes sandbox: {result['note']}", file=sys.stderr)
     return 0
+
+
+@contextlib.contextmanager
+def _ended_like_ctrl_c(ended: list):
+    """While ``sandbox on`` turns the sandbox on: what tells the command to end (SIGTERM, a closed terminal's
+    SIGHUP, Ctrl+Break on Windows, Ctrl+C) interrupts it as Ctrl+C does, once. ``turn_on`` takes itself back for
+    an interrupt; a command that just ends leaves the launcher's service registered for a profile nobody marked.
+    A signal that comes after the first is held back, so that the undo is not cut short in its turn. *ended*
+    receives each signal's number. Python runs signal handlers in the main thread only: in another thread
+    nothing is changed."""
+    import signal
+    import threading
+
+    def handler(number, frame) -> None:
+        ended.append(number)
+        if len(ended) == 1:
+            raise KeyboardInterrupt
+
+    before = {}
+    if threading.current_thread() is threading.main_thread():
+        for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"):
+            number = getattr(signal, name, None)
+            if number is not None:
+                before[number] = signal.signal(number, handler)
+    try:
+        yield
+    finally:
+        for number, earlier in before.items():
+            signal.signal(number, signal.SIG_DFL if earlier is None else earlier)
+
+
+def _interrupted(layout, number: int) -> int:
+    """What ``sandbox on`` says and returns once an interrupt has ended it: the exit status a shell gives a
+    command that a signal ended."""
+    from .launcher.login_service import switched_on
+    from .launcher.switch import is_marked
+
+    try:
+        if is_marked(layout) or switched_on(layout):
+            print(f"hermes sandbox: Interrupted. The sandbox switch is still on for this profile; run "
+                  f"`hermes{_profile_flag(layout)} sandbox off`.", file=sys.stderr)
+        else:
+            print("hermes sandbox: Interrupted. The sandbox was not turned on.", file=sys.stderr)
+    except OSError:  # the terminal that would show it is closed
+        pass
+    return 128 + int(number)
 
 
 def _cmd_off(args) -> int:

@@ -448,6 +448,7 @@ def test_a_login_service_start_and_stop_reviews_nothing_and_releases_nothing(lay
     H.take_baseline(layout.home, layout.state_dir)
     TH.plant_the_four(layout.home)  # what the sandbox wrote before the restart
     monkeypatch.setattr(LS, "switched_on", lambda lay: True)
+    SW.mark(layout)  # and its profile is marked: a login service runs a sandbox for no other
     assert run(service=True) == 0 and seen[-1]["own_pin"] is False
     assert P.present(layout) and _pinned_command(layout) is None  # still the switch-on's pin
     assert H.is_open(layout.state_dir) and _ids(H.diff(layout.home, layout.state_dir)) == TH.FOUR

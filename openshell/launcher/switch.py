@@ -39,6 +39,18 @@ waits for them a few seconds and answers ``pending``; steps 3 and 4 run inside t
 answer, so the profile is still marked right before the answer the desktop routes by. A start whose answer nobody
 asks for any more is undone like one that failed, and so is one whose process ended in the middle (``lost_start``).
 
+Between step 1 and step 3 the launcher runs a sandbox for a profile that is not marked, and only the process that
+is turning it on can mark it. That process can end there: a closed terminal, a signal, a Hermes that quits, a
+power loss. So the launcher keeps a sandbox only for a profile that is marked or whose switch-on is still under
+way (``cut_off``: the record ``_start`` leaves beside the launcher's state names a process that runs). For any
+other it marks the profile first, ends the sandbox, removes its service and clears the marker last
+(``end_cut_off``), both when its service starts it (a login, a restart) and while its sandbox runs
+(launcher_cli.py). The record also says what happens to the home. While it is there, the switch-on never reached
+its mark: the home is put back without asking, as a switch-on that fails puts it back. Without a record the
+profile was switched on at some time and its marker is gone (the marker's file was removed): the home stays as
+the sandbox left it, the baseline stays open, and the next switch-on lists the changes and asks.
+``hermes sandbox on`` takes itself back as well when it is told to end (SIGTERM, SIGHUP, Ctrl+C, Ctrl+Break).
+
 Turning off (from the sandboxed page, served by the launcher). The desktop must never see the
 profile marked while it no longer routes it to the launcher (it fails closed with a full-screen
 "Hermes couldn't start"), so the launcher tears down BEFORE the desktop override goes:
@@ -143,6 +155,16 @@ REQUEST_WAIT_MAX = 25.0
 UNCOLLECTED_AFTER = 45.0
 # Which process is starting the sandbox, kept beside the launcher's state while a start is neither marked nor undone.
 START_RECORD = "switch-on.json"
+# The longest a switch-on is under way between its record and its mark: the wait for the sandbox, the wait for a
+# request to take the answer, and a minute for the service manager. An older record stands for no switch-on,
+# whatever its process does. The age is taken from the wall clock, the one clock the launcher shares with the
+# process that wrote the record: a clock set forward by more than this during a switch-on ends that switch-on,
+# and a clock set back leaves it under way for as long as its process runs.
+START_LIMIT = READY_TIMEOUT + UNCOLLECTED_AFTER + 60.0
+# Another program (a virus scanner, an indexer) can hold a file that was just written, and removing the start
+# record then fails. It is tried this many times, this far apart: 0.15 s in all, because ``_finish`` removes the
+# record inside the request that answers the page.
+FORGET_TRIES, FORGET_PAUSE = 4, 0.05
 NOT_FINISHED = "The sandbox didn't finish starting. Turn it on again."
 SWITCH_ROUTE = "/api/plugins/openshell/switch"
 
@@ -490,7 +512,10 @@ def _start(layout, *, handback_answer: Optional[str] = None, handback_seen: Opti
     if not avail["available"]:
         raise SwitchError(avail["reason"])
     if is_marked(layout):
-        raise SwitchError(already_marked(layout))
+        # A launcher that is ending a switch-on nobody finished keeps the profile marked until its sandbox is
+        # gone (``end_cut_off``): it is waited for, like a launcher that has just turned off.
+        if _wait_for_ending_launcher(layout, sleep) is not None or is_marked(layout):
+            raise SwitchError(already_marked(layout))
     if _wait_for_ending_launcher(layout, sleep) is not None:
         raise SwitchError("A sandbox is already running for this profile. Stop it first.")
     note = refuse_unready(layout)
@@ -568,22 +593,35 @@ def _finish(started: _Started) -> dict:
     except BaseException:
         _undo(layout, service, port, token, marked, started.sleep, started.taken)
         raise
-    _forget_start(layout)
+    _forget_start(layout, started.sleep)
     return {"profile": layout.name, "plugin": PLUGIN_ID, "url": f"http://127.0.0.1:{port}", "token": token,
             "undo_ticket": minted["ticket"], "service": service.kind, "status": started.status,
             "handback": started.handed_back, **({"note": started.note} if started.note else {})}
 
 
 def _undo(layout, service: LoginService, port: int, token: str, marked: bool, sleep, taken: bool = False) -> None:
-    """*taken*: this switch-on recorded the baseline (an older one that was still open is not its to end)."""
-    for step in (lambda: _stop_service(layout, service, port, token, sleep), lambda: pins.release(layout),
-                 *([lambda: _hand_back_undone(layout)] if taken else []),
-                 lambda: remove_definition(layout), lambda: _forget_start(layout), service.uninstall,
-                 *([lambda: clear_marker(layout), lambda: host_serve(layout)] if marked else [])):
+    """Take a switch-on back: the service stopped, the pins released, the home put back, the definition, the
+    record and the registration removed, and the marker cleared last when this switch-on set it (*marked*).
+    *taken*: this switch-on recorded the baseline (an older one that was still open is not its to end)."""
+    _each(lambda: _stop_service(layout, service, port, token, sleep), lambda: pins.release(layout),
+          *([lambda: _hand_back_undone(layout)] if taken else []),
+          lambda: remove_definition(layout), lambda: _forget_start(layout, sleep), service.uninstall,
+          *([lambda: clear_marker(layout), lambda: host_serve(layout)] if marked else []))
+
+
+def _each(*steps: Callable[[], object]) -> None:
+    """Run every step, whatever an earlier one raised. An interrupt that arrives while a step runs (a second
+    Ctrl+C) ends that step alone and is raised again after the last one, so an undo is never left half way."""
+    interrupt: Optional[BaseException] = None
+    for step in steps:
         try:
             step()
         except Exception:
             pass
+        except BaseException as exc:
+            interrupt = interrupt or exc
+    if interrupt is not None:
+        raise interrupt
 
 
 def _hand_back_undone(layout) -> None:
@@ -612,11 +650,40 @@ def _note_start(layout) -> None:
         log.warning("the start of profile %s's sandbox could not be recorded: %s", layout.name, _why(exc))
 
 
-def _forget_start(layout) -> None:
+def _forget_start(layout, sleep: Callable[[float], None] = time.sleep) -> bool:
+    """Remove the record of the start, and say whether it is gone. A file that another program holds for a moment
+    is tried ``FORGET_TRIES`` times, ``FORGET_PAUSE`` seconds apart. Never holds the switch-on: a record that
+    stays after a switch-on that reached its mark is removed by the launcher (``forget_finished_start``)."""
+    path = layout.state_dir / START_RECORD
+    for left in range(FORGET_TRIES - 1, -1, -1):
+        try:
+            path.unlink(missing_ok=True)
+            return True
+        except OSError as exc:
+            if not left:
+                log.warning("the record of profile %s's start could not be removed: %s", layout.name, _why(exc))
+                return False
+        sleep(FORGET_PAUSE)
+    return False
+
+
+def forget_finished_start(layout, alive: Optional[Callable[[Optional[dict]], bool]] = None) -> bool:
+    """Remove a record that outlived a switch-on which reached its mark, and say whether one was removed.
+
+    ``_finish`` removes the record right after the mark, but that can fail (``_forget_start``). The record would
+    then stay for the whole session, and a marker that is lost later would make the session look like a switch-on
+    that never finished, whose home is put back without a list (``end_cut_off``). The record is proven stale when
+    the profile is marked and no switch-on is under way: a marked profile takes no new switch-on, and the one that
+    wrote the record has ended or is older than a switch-on takes. The record of a switch-on that is under way is
+    never touched: that switch-on is between its mark and its own removal of the record, or about to undo itself.
+    One try: the launcher asks again at its next look."""
+    if not start_recorded(layout) or start_in_flight(layout, alive) or not is_marked(layout):
+        return False
     try:
         (layout.state_dir / START_RECORD).unlink(missing_ok=True)
-    except OSError as exc:
-        log.warning("the record of profile %s's start could not be removed: %s", layout.name, _why(exc))
+    except OSError:
+        return False
+    return True
 
 
 def lost_start(layout, alive: Callable[[Optional[dict]], bool] = launcher_state_alive) -> bool:
@@ -658,6 +725,71 @@ def undo_lost_start(layout, *, runtime=None, manager: Callable = manager_for, en
     # The definition is written after the baseline is recorded, so the open baseline is that switch-on's own.
     _undo(layout, manager(define(layout, runtime, environ)), port, token, False, sleep, True)
     return True
+
+
+def start_in_flight(layout, alive: Optional[Callable[[Optional[dict]], bool]] = None) -> bool:
+    """Whether a switch-on of this profile is under way: its record is there, the process that wrote it still
+    runs, and the record is no older than a switch-on takes (``START_LIMIT``; a process that hangs is not
+    waited for)."""
+    try:
+        record = json.loads((layout.state_dir / START_RECORD).read_text(encoding="utf-8"))
+        age = time.time() - float(record["since"])
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+    # A record dated after this moment was written before the clock was set back: it is as young as it can be.
+    young = age < 0 or age <= START_LIMIT
+    return young and (alive or launcher_state_alive)(record)
+
+
+def start_recorded(layout) -> bool:
+    """Whether a switch-on of this profile left its record: it never reached its mark. ``_finish`` removes the
+    record only after the mark, and a switch-on that undoes itself removes it too."""
+    return (layout.state_dir / START_RECORD).is_file()
+
+
+def cut_off(layout, alive: Optional[Callable[[Optional[dict]], bool]] = None) -> bool:
+    """Whether a sandbox of this profile has no owner: the profile is not marked, so Hermes on this computer runs
+    it too, and no switch-on is under way that is about to mark it. The launcher keeps a sandbox only while this
+    is False."""
+    return not is_marked(layout) and not start_in_flight(layout, alive)
+
+
+def end_cut_off(layout, end_sandbox: Callable[[], object], *, runtime=None,
+                manager: Optional[Callable] = None) -> Optional[str]:
+    """What the launcher does about ``cut_off``, in the order of a switch-off. The profile is marked first, so
+    Hermes on this computer stops running it at once. *end_sandbox* then ends the sandbox and answers whether it
+    is gone. The pins are released, the launcher's service is removed (never stopped: this runs inside it, and a
+    stop would end it half way), and the marker is cleared last.
+
+    What happens to the home depends on the record of the start (``start_recorded``):
+
+    * the record is there: the switch-on never reached its mark. The open baseline is that switch-on's own and
+      minutes old, so the home is put back without asking and the baseline ends, as ``_undo`` does it. The
+      answer is ``"undone"``.
+    * no record: the profile was switched on at some time and its marker is gone since, or its sandbox was
+      started by a plugin that writes no record. That sandbox ran for hours or days and nobody has seen a list
+      of what it changed, so the home is left as it is and the baseline stays open: the next switch-on lists the
+      changes and asks (``previous_session``), and so does ``hermes sandbox off``. The answer is ``"review"``.
+
+    None when the sandbox could not be ended: the profile stays marked and the service registered, as after a
+    switch-off that failed, and ``hermes sandbox off`` finishes the job."""
+    unfinished = start_recorded(layout)
+    try:
+        mark(layout)
+        host_drop(layout)
+    except Exception as exc:
+        log.warning("profile %s could not be marked before its sandbox is ended: %s", layout.name, _why(exc))
+    try:
+        gone = bool(end_sandbox())
+    except Exception as exc:
+        log.warning("the sandbox of profile %s could not be ended: %s", layout.name, _why(exc))
+        gone = False
+    if not gone:
+        return None
+    _each(lambda: pins.release(layout), *([lambda: _hand_back_undone(layout)] if unfinished else []),
+          lambda: _forget_start(layout), lambda: unregister(layout, runtime, manager or manager_for),
+          lambda: clear_marker(layout), lambda: host_serve(layout))
+    return "undone" if unfinished else "review"
 
 
 class _Job:

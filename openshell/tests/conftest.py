@@ -19,9 +19,11 @@ from pathlib import Path
 import pytest
 
 import no_real_apps as _real_apps
+import no_service_manager as _service_manager
 
 # Before any test module imports Hermes: imports, collection and session fixtures start no program either.
 _real_apps.install()
+_service_manager.install()
 
 _TEST_ROOT = Path(tempfile.mkdtemp(prefix="openshell-tests-root-")).resolve()
 os.environ["HERMES_HOME"] = str(_TEST_ROOT)
@@ -59,6 +61,8 @@ def pytest_runtest_makereport(item, call):
     yield
     if call.when == "call":  # the test already failed on the spot: the fixture below reports only a swallowed stop
         item.stopped_at_a_real_app = call.excinfo is not None and call.excinfo.errisinstance(_real_apps.StartedRealApp)
+        item.stopped_at_the_service_manager = (call.excinfo is not None
+                                               and call.excinfo.errisinstance(_service_manager.ReachedServiceManager))
 
 
 @pytest.fixture(autouse=True)
@@ -69,6 +73,22 @@ def real_apps_guard(request, monkeypatch):
     guard = _real_apps.Guard().install(monkeypatch.setattr)
     yield guard
     if guard.calls and not getattr(request.node, "stopped_at_a_real_app", False):
+        pytest.fail(guard.report(), pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def service_manager_guard(request):
+    """No test reaches the computer's service manager (``no_service_manager``): a call that is about to run
+    ``schtasks``, ``systemctl``, ``loginctl``, ``launchctl`` or the login service's console helper is recorded and
+    stops the test before the program starts, and a stop the code under test swallowed fails the test here. A test
+    that gives the switch a manager of its own, or a manager a runner of its own, never gets that far."""
+    guard = _service_manager.Guard()
+    _service_manager.RUNNING.append(guard)
+    try:
+        yield guard
+    finally:
+        _service_manager.RUNNING.remove(guard)
+    if guard.calls and not getattr(request.node, "stopped_at_the_service_manager", False):
         pytest.fail(guard.report(), pytrace=False)
 
 

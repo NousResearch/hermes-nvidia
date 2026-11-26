@@ -37,6 +37,14 @@ The order makes a half-finished switch fail closed.
    sandbox runs. From then on the host refuses to run it.
 6. The desktop routes the profile to the launcher.
 
+The command or the app that is switching on can end between steps 3 and 5: a closed terminal, a
+Hermes that quits, a power loss. The launcher then undoes step 3 itself: it marks the profile,
+stops the sandbox, removes its login service and clears the marker.
+After a power loss it does that at the next login and starts no sandbox.
+
+The launcher also stops the sandbox of a profile that was switched on and whose marker is gone.
+It puts nothing back then: the next switch-on lists what the sandbox changed and asks.
+
 ## What turning off does
 
 1. The launcher compares the profile folder with the record it took at switch-on.

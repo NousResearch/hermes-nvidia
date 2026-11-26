@@ -256,6 +256,7 @@ def test_a_restart_takes_no_baseline(layout, serve, tmp_path, monkeypatch):  # n
 
     asyncio.run(restart())
     monkeypatch.setattr(LS, "switched_on", lambda lay: True)  # the login service's start: the switch is on
+    SW.mark(layout)  # and its profile is marked: a login service runs a sandbox for no other
     assert CLI._cmd_serve(_serve_args(service=True)) == 0
     assert _ids(H.diff(layout.home, layout.state_dir)) == ["file:scripts/planted.sh"]
 

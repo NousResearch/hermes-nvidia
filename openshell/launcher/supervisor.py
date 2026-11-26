@@ -63,6 +63,9 @@ class Supervisor:
         self.temporary: dict = {"folders": [], "approved": {}}
         self._saved_network: Optional[dict] = None
         self.switching_off = False  # the switch is turning off: the launcher stops and exits for good
+        # Set by the launcher when it ends a sandbox nobody owns (launcher_cli ``_end_when_cut_off``): a start
+        # under way gives up at its next look, so ``stop`` gets its turn without waiting for the backend.
+        self.abandon_start = False
         self._gateway_gone_at: Optional[float] = None  # when the gateway was last found gone (``gateway_gone``)
         self._watching = False  # ``watch`` runs: it looks at the sandbox, off this loop where that takes time
         # Why the sandbox is restarting, while it does (cards.py passes it for folder grants and removals):
@@ -323,6 +326,7 @@ class Supervisor:
             self._standin = await asyncio.to_thread(self._prepare_sign_ins, profile_secrets)
             request, folders = self._launch_request(profile_secrets, self._standin)
             await asyncio.to_thread(self.driver.start, request)
+            self._go_on_starting()
             await self._wait_ready()
             self._keep_sign_ins_current()
         except Exception as exc:
@@ -335,9 +339,14 @@ class Supervisor:
         self._endpoints_allowed = []
         self.applied = {"folders": folders, "network": self._saved_network or request.network}
 
+    def _go_on_starting(self) -> None:
+        if self.abandon_start:
+            raise SandboxStartError("the switch-on of this sandbox did not finish")
+
     async def _wait_ready(self) -> None:
         deadline = time.monotonic() + READY_TIMEOUT
         while time.monotonic() < deadline:
+            self._go_on_starting()
             code = self.driver.exit_code()
             if code is not None:
                 raise SandboxStartError(f"sandbox exited with {code} before the backend was ready; "

@@ -179,6 +179,7 @@ def serve(layout, monkeypatch):
 
 def test_the_login_service_start_never_pins(layout, serve, monkeypatch):
     monkeypatch.setattr(LS, "switched_on", lambda lay: True)  # the switch is on: this is a restart at login
+    SW.mark(layout)  # and its profile is marked: a login service runs a sandbox for no other
     monkeypatch.setattr(P, "take", lambda lay: pytest.fail("a restart must not pin"))
     assert CLI._cmd_serve(_serve_args(service=True)) == 0
     assert serve == [{"service": True, "own_pin": False, "pinned": False}]

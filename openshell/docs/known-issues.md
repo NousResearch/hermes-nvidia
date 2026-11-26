@@ -36,6 +36,28 @@ The sandbox's shell, busybox-w32, is not code-signed.
 
 Use the page's own switch to turn the sandbox on.
 
+### A switch-on that ended before it finished
+
+If the command or the app that is switching a sandbox on ends before the profile is marked, the
+launcher stops the sandbox and removes its login service.
+
+- What the sandbox changed until then among the settings and files that run on this computer is
+  put back without a review. The sandbox's versions are kept in
+  `openshell/<profile>/handback/held`.
+- If the launcher was killed in the same moment, it does this when the service manager starts it
+  again: after 5 seconds on Linux, after 1 minute on Windows, or at the next login.
+- If the sandbox cannot be stopped, the profile stays marked. Run
+  `hermes -p <profile> sandbox off`.
+
+### A profile that is switched on and whose marker is gone
+
+If the run-elsewhere marker of a switched-on profile is removed, the launcher stops the sandbox
+and removes its login service. It puts nothing back.
+
+- Until the review, Hermes on this computer runs the profile with what the sandbox changed.
+- The next switch-on lists those changes and asks.
+  `hermes -p <profile> sandbox off --revert` or `--keep` answers the list without switching on.
+
 ### A sandbox whose launcher has stopped
 
 If the launcher stops by itself, the profile stays switched on for the sandbox, and the page

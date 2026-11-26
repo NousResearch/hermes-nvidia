@@ -37,6 +37,7 @@ hermes sandbox runtime status | install [--build-dir DIR] | remove
 | 2 | For `check`: the computer can run the sandbox, but the switch is refused for this profile. Also the status of a missing or unknown subcommand. |
 | 3 | For `on`, `off` and `serve`: changes need an answer, and nothing was changed. Run the command again with `--revert` or `--keep`. |
 | 130 | For `serve`: interrupted from the keyboard. |
+| 128 + N | For `on`: signal number N told the command to end while it was turning the sandbox on: 130 for Ctrl+C, 143 for SIGTERM. |
 
 ## on
 
@@ -63,6 +64,13 @@ and one line when the profile's model has no key.
 
 With exit status 3, `on` prints the list "Changed in the sandbox" first.
 See [Review changes at switch-off](switching-off.md#a-session-that-ended-without-a-review).
+
+When `on` is told to end before it has marked the profile (Ctrl+C, a closed terminal, SIGTERM), it
+stops the launcher, removes the login service and says
+`Interrupted. The sandbox was not turned on.`
+
+If `on` is killed instead, or the computer loses power, the launcher takes the switch-on back
+itself. See [How it works](how-it-works.md#what-turning-on-does).
 
 ## off
 
@@ -159,6 +167,8 @@ but the switch is refused for this profile.
 
 Starts the sandboxed backend and its proxy in the foreground.
 `on` runs the same command as a login service, with `--service`.
+A foreground `serve` is a developer's command: it does not mark the profile, so Hermes on this
+computer runs the profile too while that sandbox runs. `on` and the Sandbox page mark it.
 
 Once the sandboxed backend answers, `serve` prints two lines:
 
@@ -179,7 +189,7 @@ Point a client at `http://127.0.0.1:N` with the token stored in the file `serve`
 | `--openshell-image REF` | Hermes image for the OpenShell sandbox |
 | `--egress deny\|allow` | Internet access from the sandbox. `allow` is refused and nothing is saved: OpenShell has no rule for all internet access. |
 | `--rotate-token` | Mint a new outer token |
-| `--service` | Run as the profile's login service. It exits at once if the switch is off. |
+| `--service` | Run as the profile's login service. It exits at once if the switch is off. It runs a sandbox only for a profile that is marked or is being switched on. |
 | `--revert`, `--keep` | Answer the review of the last sandbox session |
 | `--move-keys` | First move keys written in `config.yaml` to `.env` |
 
