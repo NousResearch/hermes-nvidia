@@ -30,6 +30,7 @@ from test_cards import harness  # noqa: F401  (the cards fixture)
 
 HOST = "telemetry.nousresearch.com"
 RULE = "hermes_builtin_usage_data"
+SITE = OD.rule_name("site", "pypi.org", 443)
 REASON = "Usage data this profile shares with Nous"
 ROW = {"host": HOST, "port": 443, "reason": REASON, "rule": RULE}
 OTHER = "https://collector.example.net/v1/telemetry"
@@ -97,8 +98,8 @@ def test_the_destination_is_open_only_while_both_answers_are_on_and_the_endpoint
     answers(tmp_path, **keys)
     assert U.shared(tmp_path) is is_open
     assert U.destinations(tmp_path) == ([ROW] if is_open else [])
-    rules = U.rules({"hermes_site_pypi_org_443": {"name": "hermes_site_pypi_org_443"}}, tmp_path, ["/store/python3"])
-    assert (RULE in rules) is is_open and "hermes_site_pypi_org_443" in rules
+    rules = U.rules({SITE: {"name": SITE}}, tmp_path, ["/store/python3"])
+    assert (RULE in rules) is is_open and SITE in rules
     if is_open:
         assert rules[RULE] == {"name": RULE, "endpoints": [{"host": HOST, "port": 443}],
                                "binaries": [{"path": "/store/python3"}]}
@@ -181,7 +182,7 @@ def test_linux_the_sandbox_starts_with_the_rule_only_while_the_profile_shares(tm
             assert {e.get("host") for r in rules.values() for e in r["endpoints"]} <= {"pypi.org", HOST}
             if is_open:
                 # bound to Hermes's interpreter exactly as the page's own destinations are, and nothing wider
-                assert rules[RULE]["binaries"] == rules["hermes_site_pypi_org_443"]["binaries"] \
+                assert rules[RULE]["binaries"] == rules[SITE]["binaries"] \
                     == [{"path": b} for b in sup.driver._binaries]
                 assert list(sup.driver._binaries) == [str(sup.driver._runtime.real_python)]  # the resolved interpreter
                 assert rules[RULE]["endpoints"] == [{"host": HOST, "port": 443}]
@@ -212,7 +213,7 @@ def test_linux_the_rule_follows_the_answer_at_every_network_update_and_is_never_
             assert RULE not in _linux_policies(api) and (await get(LD._req(), b""))[1]["builtin"] == []
             answers(layout.home, **ON)  # the user says yes while the sandbox runs
             payload = await edit([{"host": "pypi.org", "port": 443}])
-            assert set(_linux_policies(api)) == {"hermes_site_pypi_org_443", RULE}
+            assert set(_linux_policies(api)) == {SITE, RULE}
             assert payload["builtin"] == [ROW] and payload["network"]["allow"] == [{"host": "pypi.org", "port": 443}]
             assert sup.status()["applied"]["network"]["allow"] == [{"host": "pypi.org", "port": 443}]
             assert not sup.status()["restart_required"] and not sup.status()["pending"]["network"]
@@ -234,7 +235,7 @@ def test_linux_the_rule_follows_the_answer_at_every_network_update_and_is_never_
             # sharing turned off: the next update leaves it out, and a restored revision that held it does not bring it back
             answers(layout.home, enabled=False, send=False)
             await edit([{"host": "pypi.org", "port": 443}])
-            assert set(_linux_policies(api)) == {"hermes_site_pypi_org_443"} and sup.driver.usage_data_open is False
+            assert set(_linux_policies(api)) == {SITE} and sup.driver.usage_data_open is False
             with_rule = next(r["version"] for r in api.revisions["hermes-work"] if RULE in r["policy"]["network_policies"])
             status, payload, _ = await rollback(LD._req(), json.dumps({"version": with_rule}).encode())
             assert status == 200 and RULE not in _linux_policies(api)
@@ -253,7 +254,7 @@ def test_reading_a_policy_back_leaves_the_built_in_rule_out():
         return {"name": name, "endpoints": [{"host": host, "port": 443}], "binaries": [{"path": path}]}
 
     policy = {"network_policies": {RULE: rule(RULE, HOST, "/py"),
-                                   "hermes_site_pypi_org_443": rule("hermes_site_pypi_org_443", "pypi.org", "/py"),
+                                   SITE: rule(SITE, "pypi.org", "/py"),
                                    "allowed_host_example_com": rule("allowed_host_example_com", "example.com", "**")}}
     network = OD.network_from_policy(policy, ["/py"])
     assert network["allow"] == [{"host": "pypi.org", "port": 443}] and set(network["approved"]) == {"allowed_host_example_com"}
@@ -284,12 +285,12 @@ def test_windows_the_sandbox_starts_with_the_rule_only_while_the_profile_shares(
             assert {e["host"] for r in rules.values() for e in r["endpoints"]} <= {"pypi.org", HOST}
             if is_open:
                 # the backend's own interpreter in native form, and a TLS tunnel to the site: as the page's destinations
-                assert rules[RULE]["binaries"] == rules["hermes_site_pypi_org_443"]["binaries"] \
+                assert rules[RULE]["binaries"] == rules[SITE]["binaries"] \
                     == [{"path": b} for b in driver._binaries]
                 assert len(driver._binaries) == 1 and WD._native_form(driver._binaries[0])
                 assert Path(driver._binaries[0]).parts[-2:] == ("python-3.14", "python.exe")  # the store's, not the venv's
                 assert rules[RULE]["endpoints"] == [{"host": HOST, "port": 443, "tls": "skip"}]
-                assert rules["hermes_site_pypi_org_443"]["endpoints"] == [{"host": "pypi.org", "port": 443, "tls": "skip"}]
+                assert rules[SITE]["endpoints"] == [{"host": "pypi.org", "port": 443, "tls": "skip"}]
         finally:
             await sup.stop()
 
@@ -323,7 +324,7 @@ def test_windows_the_rule_follows_the_answer_at_every_network_update_and_is_neve
             assert RULE not in live() and driver.usage_data_open is False
             answers(layout.home, **ON)
             await sup.apply_network({"egress": "deny", "allow": [{"host": "pypi.org", "port": 443}]})
-            assert set(live()) == {"hermes_site_pypi_org_443", RULE} and driver.usage_data_open is True
+            assert set(live()) == {SITE, RULE} and driver.usage_data_open is True
             assert live()[RULE]["endpoints"] == [{"host": HOST, "port": 443, "tls": "skip"}]
             assert live()[RULE]["binaries"] == [{"path": b} for b in driver._binaries]
             assert driver.current_network() == {"egress": "deny", "allow": [{"host": "pypi.org", "port": 443}]}

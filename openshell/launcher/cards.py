@@ -585,6 +585,27 @@ def _merge_rule(a: Optional[dict], b: Optional[dict]) -> Optional[dict]:
     return out
 
 
+def without_grant(approved: dict, target: str) -> Optional[dict]:
+    """*approved* (the saved rules by name) without the grant *target* that "Allowed from chat" lists: a tool
+    category's rule (``tool:<id>``), or one website. Two websites can be in one saved rule (their names fold to
+    one rule name), so only the chosen website's endpoints are taken out, and a rule goes once none is left.
+    None when nothing in *approved* is that grant."""
+    tool = target[len(TOOL_TARGET_PREFIX):] if target.startswith(TOOL_TARGET_PREFIX) else None
+    out, found = {}, False
+    for name, rule in (approved or {}).items():
+        if tool is not None and name == TOOL_RULE_PREFIX + tool:
+            found = True
+            continue
+        if tool is None and name.startswith(HOST_RULE_PREFIX) and target in _rule_hosts(rule):
+            found = True
+            left = [ep for ep in rule.get("endpoints") or [] if str(ep.get("host") or "").lower() != target]
+            if not left:
+                continue
+            rule = {**rule, "endpoints": left}
+        out[name] = rule
+    return out if found else None
+
+
 def _rule_hosts(rule: dict) -> dict[str, set]:
     out: dict[str, set] = {}
     for ep in (rule or {}).get("endpoints") or []:
@@ -3725,14 +3746,9 @@ class Cards:
         elif kind == "network" and scope == "always":
             spec = load_spec(self._layout)
             net = network_policy(spec)
-            approved = dict(net.get("approved") or {})
-            names = [n for n, r in approved.items()
-                     if (n.startswith(HOST_RULE_PREFIX) and target in _rule_hosts(r))
-                     or (target.startswith(TOOL_TARGET_PREFIX) and n == TOOL_RULE_PREFIX + target[len(TOOL_TARGET_PREFIX):])]
-            if not names:
+            approved = without_grant(net.get("approved") or {}, target)
+            if approved is None:
                 return 404, "No such grant."
-            for n in names:
-                approved.pop(n)
             new = {**net, "approved": approved} if approved else {k: v for k, v in net.items() if k != "approved"}
             self._sup.set_spec(await asyncio.to_thread(update_spec, self._layout, network=new))
             self._net_dirty = True

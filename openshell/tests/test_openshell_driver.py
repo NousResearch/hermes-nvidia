@@ -299,9 +299,9 @@ def test_network_rules_round_trip_through_the_policy():
                                                    "endpoints": [{"host": "pypi.org", "port": 443}],
                                                    "binaries": [{"path": "/usr/bin/pip"}]}}}
     rules = OD.network_rules(network, (PY,))
-    site = rules["hermes_site_api_github_com_443"]
+    site = rules[OD.rule_name("site", "api.github.com", 443)]
     assert site["endpoints"] == [{"host": "api.github.com", "port": 443}] and site["binaries"] == [{"path": PY}]
-    assert rules["hermes_addr_203_0_113_0_24_8443"]["endpoints"] == [{"port": 8443, "allowed_ips": ["203.0.113.0/24"]}]
+    assert rules[OD.rule_name("addr", "203.0.113.0/24", 8443)]["endpoints"] == [{"port": 8443, "allowed_ips": ["203.0.113.0/24"]}]
     assert any(r["binaries"] == [{"path": "/usr/bin/curl"}] for r in rules.values())
     assert rules["allow_pypi_org_443"] == network["approved"]["allow_pypi_org_443"]
     back = OD.network_from_policy({"network_policies": rules}, (PY,))
@@ -501,7 +501,7 @@ def test_network_edits_apply_live_and_revisions_roll_back(tmp_path, monkeypatch)
             status, cfg, _ = await put(_req(), json.dumps({"egress": "deny", "allow": [{"host": "api.github.com", "port": 443}]}).encode())
             assert status == 200 and not cfg["restart_required"]
             (_, _, policy, ann), = [c for c in api.calls if c[0] == "update"]
-            assert "hermes_site_api_github_com_443" in policy["network_policies"] and ann == {"hermes.change": "network"}
+            assert OD.rule_name("site", "api.github.com", 443) in policy["network_policies"] and ann == {"hermes.change": "network"}
             assert policy["filesystem"] == api.revisions["hermes-work"][0]["policy"]["filesystem"]  # static part untouched
             assert sup.status()["applied"]["network"]["allow"] == [{"host": "api.github.com", "port": 443}]
 

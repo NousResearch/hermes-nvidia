@@ -421,7 +421,7 @@ def test_launch_policy_hides_credentials_names_native_binaries_and_enables_the_u
         assert not any(W._inside(grant, d) for d in denied), grant
     assert all(_native_form(p) for p in fs["read_only"] + fs["read_write"] + denied)
     rules = policy["network_policies"]
-    assert rules["hermes_site_api_github_com_443"]["binaries"] == [{"path": W.native(runtime.base_python / "python.exe")}]
+    assert rules[OD.rule_name("site", "api.github.com", 443)]["binaries"] == [{"path": W.native(runtime.base_python / "python.exe")}]
     assert rules["allow_example_com_443"]["binaries"] == [{"path": "C:\\store\\python.exe"}]
 
 
@@ -463,8 +463,8 @@ def test_plain_host_grants_are_tls_tunnels_to_the_site_and_overlaps_keep_termina
     tls = {name: [ep.get("tls") for ep in rule["endpoints"]] for name, rule in rules.items()}
     assert tls["allowed_host_example_com"] == ["skip", "skip"]
     assert tls["allowed_tool_web_extract"] == ["skip", "skip"]
-    assert tls["hermes_site_api_github_com_443"] == ["skip"]
-    assert tls["hermes_site_example_org_443"] == ["skip"] and tls["allowed_host_www_example_org"] == ["skip"]
+    assert tls[OD.rule_name("site", "api.github.com", 443)] == ["skip"]
+    assert tls[OD.rule_name("site", "*.example.org", 443)] == ["skip"] and tls["allowed_host_www_example_org"] == ["skip"]
     assert tls["allowed_host_api_openai_com"] == [None]  # the provider's endpoint: placeholders need termination
     assert tls["allowed_host_pypi_org"] == [None] and tls["allow_pypi_org_443"] == [None]  # an L7 rule overlaps
     # idempotent (a policy read back and applied again), and a rule read back with skip may lose it again
@@ -675,7 +675,7 @@ def test_requests_live_network_revisions_and_events(tmp_path, secrets_env):
                                         "approved": live["approved"]})
             assert out["policy_version"] == 3
             sent = fake.policy_files[-1]
-            assert set(sent["network_policies"]) == {"hermes_site_pypi_org_443", "allow_example_com_443"}
+            assert set(sent["network_policies"]) == {OD.rule_name("site", "pypi.org", 443), "allow_example_com_443"}
             assert sent["filesystem_policy"] == driver._launch_policy["filesystem_policy"]
             assert "deny" not in sent["filesystem_policy"]  # live updates never carry a deny list either
             assert all(_native_form(b["path"]) for r in sent["network_policies"].values() for b in r["binaries"])

@@ -1313,6 +1313,21 @@ def _not_ready(label: str, state: str, reason) -> str:
 # -- network rules <-> policy ------------------------------------------------------------------------
 
 def rule_name(kind: str, target: str, port: int, binary: Optional[str] = None) -> str:
+    """The name of the rule for one destination: the exact *target* (a host name or an address block), its
+    *port* and the program the rule is for, if any. The readable part, the target folded to ``a-z0-9_`` and cut,
+    is for a person who reads a policy. The ten hex digits are a hash of the exact kind, target, port and
+    program, and they alone keep two destinations apart: names that fold alike (``api-one.example`` and
+    ``api.one.example``, a wildcard and its bare domain), names that begin alike, two programs at one host."""
+    slug = re.sub(r"[^a-z0-9]+", "_", target.lower()).strip("_")[:30]
+    exact = json.dumps([kind, target, int(port), binary or ""])
+    return f"{RULE_PREFIX}{kind}_{slug}_{int(port)}_{hashlib.sha256(exact.encode()).hexdigest()[:10]}"
+
+
+def folded_rule_name(kind: str, target: str, port: int, binary: Optional[str] = None) -> str:
+    """The short form of a destination's rule name: the folded target and the port, with eight hex digits of
+    the program when the rule names one. Two destinations can share it, so nothing is written under it. A saved
+    policy that holds a rule under this form is read by it (``spec.view_from_policy``) and gets the rule under
+    ``rule_name`` at its next save."""
     slug = re.sub(r"[^a-z0-9]+", "_", target.lower()).strip("_")[:40]
     name = f"{RULE_PREFIX}{kind}_{slug}_{port}"
     if binary:

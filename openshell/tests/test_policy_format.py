@@ -11,6 +11,9 @@ import pytest
 import hermes_yaml
 from openshell.launcher import layout as L
 from openshell.launcher import spec as S
+from openshell.launcher.openshell_driver import rule_name
+
+GITHUB = rule_name("site", "api.github.com", 443)
 
 
 @pytest.fixture
@@ -53,12 +56,13 @@ def test_saved_spec_stores_an_openshell_policy_and_reads_back_the_same_view(layo
     assert doc["version"] == 1
     assert doc["filesystem_policy"] == {"include_workdir": False, "read_write": [str(rw)], "read_only": [str(ro)]}
     rules = doc["network_policies"]
-    site = rules["hermes_site_api_github_com_443"]
+    site = rules[GITHUB]
     assert site["endpoints"] == [{"host": "api.github.com", "port": 443}]
     assert site["binaries"] == [{"path": b} for b in S.hermes_binaries()] and site["binaries"]
     named = [r for n, r in rules.items() if n.startswith("hermes_site_pypi_org_443_")]
     assert len(named) == 1 and named[0]["binaries"] == [{"path": "C:\\tools\\uv.exe"}]
-    assert rules["hermes_addr_203_0_113_0_24_8443"]["endpoints"] == [{"port": 8443, "allowed_ips": ["203.0.113.0/24"]}]
+    assert rules[rule_name("addr", "203.0.113.0/24", 8443)]["endpoints"] == [
+        {"port": 8443, "allowed_ips": ["203.0.113.0/24"]}]
     again = S.load_spec(layout)
     assert again["folders"] == spec["folders"]
     assert S.network_policy(again) == S.network_policy(spec)
@@ -77,7 +81,7 @@ def test_a_spec_saved_before_the_policy_format_is_read_and_rewritten(layout, tmp
     S.save_spec(layout, spec)
     disk = _on_disk(layout)
     assert set(disk) == {"port", "driver", "wxc_exec", "busybox", "openshell", "egress", "policy"}
-    assert disk["egress"] == "allow" and "hermes_site_example_org_443" in disk["policy"]["network_policies"]
+    assert disk["egress"] == "allow" and rule_name("site", "example.org", 443) in disk["policy"]["network_policies"]
     assert S.load_spec(layout)["folders"] == spec["folders"]
 
 
@@ -103,7 +107,8 @@ def test_what_the_view_does_not_model_survives_a_page_edit(layout, tmp_path):
     # A folder edit from the page: the rule's L7 settings, the deny path and the approved rules stay.
     spec = S.update_spec(layout, folders=[{"path": str(rw), "access": "rw"}, {"path": str(ro), "access": "ro"}])
     stored = _on_disk(layout)["policy"]
-    assert stored["network_policies"]["hermes_site_api_github_com_443"] == l7
+    assert "hermes_site_api_github_com_443" not in stored["network_policies"]  # saved under the rule's full name
+    assert stored["network_policies"][GITHUB] == {**l7, "name": GITHUB}
     assert stored["network_policies"]["allow_example_com_443"] == approved["allow_example_com_443"]
     assert stored["network_policies"]["hermes_site_hand_written_443"] == two_endpoints
     assert stored["filesystem_policy"]["deny"] == [str(rw / ".secrets")]
@@ -111,7 +116,7 @@ def test_what_the_view_does_not_model_survives_a_page_edit(layout, tmp_path):
     # Removing the destination on the page removes its rule; approved rules are kept unless named away.
     S.update_spec(layout, network={"egress": "deny", "allow": [], "approved": net["approved"]})
     stored = _on_disk(layout)["policy"]
-    assert "hermes_site_api_github_com_443" not in stored["network_policies"]
+    assert not [name for name in stored["network_policies"] if "api_github_com" in name]
     assert "allow_example_com_443" in stored["network_policies"]
 
 

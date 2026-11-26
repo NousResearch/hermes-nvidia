@@ -253,16 +253,10 @@ def remove_grant(body: Any = Body(None)) -> dict:
     if (kind, scope) != ("network", "always"):
         raise HTTPException(status_code=404, detail="No such grant.")
     net = _spec.network_policy(_spec.load_spec(layout))
-    approved = dict(net.get("approved") or {})
-    # A host's rule, or a tool category's (``tool:<id>``). Nothing runs: the saved policy changes and that is all.
-    tool = target[len(cards.TOOL_TARGET_PREFIX):] if target.startswith(cards.TOOL_TARGET_PREFIX) else None
-    names = [n for n, r in approved.items()
-             if (tool is None and n.startswith(cards.HOST_RULE_PREFIX) and target in cards._rule_hosts(r))
-             or (tool is not None and n == cards.TOOL_RULE_PREFIX + tool)]
-    if not names:
+    # One website, or a tool category (``tool:<id>``). Nothing runs: the saved policy changes and that is all.
+    approved = cards.without_grant(net.get("approved") or {}, target)
+    if approved is None:
         raise HTTPException(status_code=404, detail="No such grant.")
-    for n in names:
-        approved.pop(n)
     new = {**net, "approved": approved} if approved else {k: v for k, v in net.items() if k != "approved"}
     _edit(layout, lambda: {"network": new})
     _view.forget_providers(layout)  # a sign-in's row says where it is used: one address fewer now

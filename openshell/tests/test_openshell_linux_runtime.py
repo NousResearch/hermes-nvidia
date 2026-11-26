@@ -225,7 +225,7 @@ def test_live_network_rules_name_the_runtime_interpreter(tmp_path, monkeypatch):
             status, cfg, _ = await put(_req(), json.dumps({"egress": "deny", "allow": [{"host": "example.org", "port": 443}]}).encode())
             assert status == 200 and not cfg["restart_required"]
             (_, _, policy, _), = [c for c in api.calls if c[0] == "update"]
-            assert policy["network_policies"]["hermes_site_example_org_443"]["binaries"] == [{"path": py}]
+            assert policy["network_policies"][OD.rule_name("site", "example.org", 443)]["binaries"] == [{"path": py}]
             assert sup.driver.current_network()["allow"] == [{"host": "example.org", "port": 443}]
         finally:
             await sup.stop()

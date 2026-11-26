@@ -21,9 +21,9 @@ spec.yaml::
         read_only: []
         # deny: [...]      # optional extra paths to hide. Windows hides them with the launcher's own
                            # through driver_config.mxc.denied_paths and never sends this key to OpenShell.
-      network_policies:    # websites and addresses; rules named hermes_<kind>_<target>_<port> are the
-        hermes_site_api_example_com_443:   # page's own, any other rule (an approved request) is kept
-          name: hermes_site_api_example_com_443   # as it is
+      network_policies:    # websites and addresses; rules named hermes_<kind>_<target>_<port>_<hash> are the
+        hermes_site_api_example_com_443_<hash>:   # page's own (openshell_driver.rule_name), any other rule
+          name: hermes_site_api_example_com_443_<hash>   # (an approved request) is kept as it is
           endpoints: [{host: api.example.com, port: 443}]
           binaries: [{path: <Hermes's interpreter>}]   # rebound by each driver to the one it runs
 
@@ -51,6 +51,7 @@ _EGRESS = ("deny", "allow")
 NO_ALL_INTERNET = "This sandbox has no rule for all internet access; add the websites it needs."
 MAX_FOLDERS = 32
 MAX_ALLOWS = 64
+MAX_HOST = 253  # the longest host name there is; a destination's host or address block is never longer
 _LABEL_RE = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 
 
@@ -267,7 +268,7 @@ def _hostname(raw: str) -> str:
     else:
         raise LayoutError(f"Enter an IP address as an address rule, not a website: {host}")
     labels = host.split(".")
-    if not host or len(host) > 253 or len(labels) < 2:
+    if not host or len(host) > MAX_HOST or len(labels) < 2:
         raise LayoutError(f"Not a website hostname: {raw.strip() or '(empty)'}")
     first, rest = labels[0], labels[1:]
     if first in ("*", "**"):
@@ -325,12 +326,13 @@ def network_from_body(body, *, host_loopback: str = "unknown", rules=("cidr",), 
 
 
 def update_spec(layout: ProfileLayout, **changes) -> dict:
-    """Re-read the saved spec, apply *changes* and save it atomically; returns the new spec."""
+    """Re-read the saved spec, apply *changes* and save it atomically; returns the new spec as the file holds
+    it, read back: what a route answers with and what a launcher keeps in memory is what the next start reads."""
     spec = load_spec(layout)
     spec.update(changes)
     network_policy(spec)
     save_spec(layout, spec)
-    return spec
+    return load_spec(layout)
 
 
 # -- the stored sandbox configuration: an OpenShell sandbox policy -------------------------------------
@@ -353,8 +355,8 @@ _PROVIDER_RULE_PREFIX = "_provider_"  # OpenShell reserves it for rules attached
 def hermes_binaries() -> list[str]:
     """The program a stored rule names when it applies to Hermes and everything Hermes starts.
 
-    Informational in the stored document: a rule's name (``hermes_<kind>_<target>_<port>`` with no
-    program suffix) is what marks it, and each driver binds such rules to the interpreter it really
+    Informational in the stored document: a rule's name (``openshell_driver.rule_name`` of the destination
+    without a program) is what marks it, and each driver binds such rules to the interpreter it really
     runs (the image's on Linux; on Windows the host runtime's leaf ``python.exe``, which is the
     process that opens the connection)."""
     if os.name == "nt":
@@ -374,6 +376,27 @@ def _rule_name(kind: str, target: str, port: int, binary: str | None = None) -> 
     return rule_name(kind, target, port, binary)
 
 
+def _rule_names(kind: str, target: str, port: int, binary: str | None = None) -> tuple[str, str]:
+    """The names a stored rule for one destination can have: its name, and the short form a saved policy can
+    hold (``openshell_driver.folded_rule_name``)."""
+    from .openshell_driver import folded_rule_name
+
+    return _rule_name(kind, target, port, binary), folded_rule_name(kind, target, port, binary)
+
+
+def _stored_rule(stored_rules: dict, name: str, entry: dict) -> dict | None:
+    """The stored text of the rule for the destination *entry* (its endpoint with its L7 settings, its
+    binaries), under *name*. A stored rule counts only when it describes this very destination, whichever of
+    the destination's names it is stored under: a short name can belong to another destination. None when no
+    stored rule is this destination's."""
+    kind, target = ("site", entry["host"]) if entry.get("host") else ("addr", entry["cidr"])
+    for stored_name in _rule_names(kind, target, int(entry["port"]), entry.get("binary")):
+        rule = stored_rules.get(stored_name)
+        if isinstance(rule, dict) and _destinations(stored_name, rule) == [entry]:
+            return {**copy.deepcopy(rule), "name": name}
+    return None
+
+
 def site_rule(entry: dict) -> tuple[str, dict]:
     """One allowed destination, as the page edits it, -> ``(name, OpenShell network rule)``."""
     binary = entry.get("binary")
@@ -391,7 +414,9 @@ def policy_document(spec: dict) -> dict:
     """The spec's folders and network as the OpenShell sandbox policy ``spec.yaml`` stores.
 
     The stored document (``spec["policy"]``) supplies what the page does not edit: other sections,
-    deny paths, and the full text of every rule still listed, so a rule's L7 settings survive."""
+    deny paths, and the full text of every rule still listed, so a rule's L7 settings survive. Every
+    destination is written under its own name (``openshell_driver.rule_name``), also one the stored document
+    holds under the short form."""
     base = copy.deepcopy(spec.get("policy") or {})
     network = network_policy(spec)
     folders = spec.get("folders") or []
@@ -405,9 +430,16 @@ def policy_document(spec: dict) -> dict:
         fs.pop("deny", None)
     stored_rules = base.get("network_policies") or {}
     rules: dict = {}
+    listed: dict = {}
     for entry in network["allow"]:
         name, rule = site_rule(entry)
-        rules[name] = copy.deepcopy(stored_rules[name]) if isinstance(stored_rules.get(name), dict) else rule
+        if name in listed:
+            if listed[name] == entry:
+                continue  # the same destination listed twice is one rule
+            raise LayoutError(f"These two destinations cannot be saved together: {_target_text(listed[name])} "
+                              f"and {_target_text(entry)}.")
+        listed[name] = entry
+        rules[name] = _stored_rule(stored_rules, name, entry) or rule
     for name, rule in (network.get("approved") or {}).items():
         rules.setdefault(name, copy.deepcopy(rule))
     for key in _POLICY_KEYS[1:]:
@@ -419,6 +451,10 @@ def policy_document(spec: dict) -> dict:
         elif key in base:
             doc[key] = base[key]
     return doc
+
+
+def _target_text(entry: dict) -> str:
+    return f"{entry.get('host') or entry.get('cidr')}:{entry['port']}"
 
 
 def policy_yaml(spec: dict) -> str:
@@ -470,7 +506,8 @@ def view_from_policy(doc) -> tuple[list[dict], dict]:
     """A stored OpenShell policy -> ``(folders, network)`` as the settings page edits them.
 
     A ``hermes_`` rule becomes a destination only when regenerating it from that destination gives the
-    same name; anything else (approved requests, hand-written rules) passes through as ``approved``."""
+    same name, or the short form of it that a saved policy can hold; anything else (approved requests,
+    hand-written rules) passes through as ``approved``."""
     check_policy_document(doc)
     fs = doc.get("filesystem_policy") or {}
     folders = ([{"path": str(p), "access": "rw"} for p in fs.get("read_write") or []]
@@ -500,15 +537,18 @@ def _destinations(name: str, rule: dict) -> list[dict] | None:
             port = int(ep.get("port") or 0)
         except (TypeError, ValueError):
             return None
+        target = ep.get("host") or (ep.get("allowed_ips") or [""])[0]
+        if not isinstance(target, str) or len(target) > MAX_HOST:
+            return None  # no destination the page can have saved
         if ep.get("host") and not ep.get("allowed_ips"):
             entry = {"host": str(ep["host"]).lower(), "port": port}
-            if len(paths) == 1 and _rule_name("site", entry["host"], port, paths[0]) == name:
+            if len(paths) == 1 and name in _rule_names("site", entry["host"], port, paths[0]):
                 entry["binary"] = paths[0]
-            elif _rule_name("site", entry["host"], port) != name:
+            elif name not in _rule_names("site", entry["host"], port):
                 return None
         elif not ep.get("host") and len(ep.get("allowed_ips") or []) == 1:
             entry = {"cidr": str(ep["allowed_ips"][0]), "port": port}
-            if _rule_name("addr", entry["cidr"], port) != name:
+            if name not in _rule_names("addr", entry["cidr"], port):
                 return None
         else:
             return None
