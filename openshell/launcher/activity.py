@@ -453,6 +453,7 @@ def file_rows(home: Path, spans: list[tuple[float, float]], since: Optional[floa
     if hi < lo:
         return [], []
     from .cards import refused_paths
+    from .layout import on_this_computer
     from .refusals import failed_result
 
     try:
@@ -499,8 +500,8 @@ def file_rows(home: Path, spans: list[tuple[float, float]], since: Optional[floa
         # that check for a past run, and the card's own rows show the decision.
         refused = refused_paths(name, args, result) if failed_result(name, result) else []
         for path, access, missing in refused:
-            if missing and not Path(path).exists():
-                continue  # really absent: not a refusal
+            if missing and not (on_this_computer(path) and Path(path).exists()):
+                continue  # really absent, or not to be looked at (a link leads off this computer): not a refusal
             rows.append({**base, "id": _uid("file", mid, str(path), access), "outcome": "denied",
                          "title": str(path), "path": str(path), "access": "write" if access == "read_write" else "read",
                          "reason": _error_line(result)})

@@ -158,6 +158,32 @@ output.
 A program that connects directly, without the sandbox's proxy, is refused and leaves no record.
 No card can come for it.
 
+## Folders
+
+### A link inside a folder you added
+
+The folder check looks at the folder you add and at the folders above it. It does not look inside
+the folder.
+
+- A junction or a symbolic link below the folder that points into a protected folder (your home
+  folder, the Hermes data folder, a credential folder) is not found. That holds for a link that was
+  there when you added the folder and for one made later.
+- On Windows, a program in the sandbox can make a junction in a folder it has read & write access
+  to.
+- What the sandbox reaches through such a link is decided by OpenShell's sandbox driver.
+- Before the launcher opens a path that the sandbox named, it checks that no link on the way leads
+  to another computer. A link that is changed between that check and the opening is followed.
+
+Add folders whose contents you know, and give **Read only** where that is enough.
+
+### Windows: a folder on a network share can't be added
+
+The sandbox takes folders on this computer's drives only. A folder on a network share is refused,
+by its `\\server\share` path and by a mapped drive letter. Copy the files to a local folder first.
+
+A folder saved under such a path keeps the sandbox from starting, and the message names the
+folder. Remove it on the Sandbox page, then add the folder by its drive path.
+
 ## Keys and providers
 
 ### Keys set from a terminal

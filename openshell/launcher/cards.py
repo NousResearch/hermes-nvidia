@@ -470,12 +470,11 @@ def openshell_host_dirs(*, windows: Optional[bool] = None, drive: Optional[str] 
     return [Path(drive + "\\", *parts) for parts in _OPENSHELL_HOST_DIRS]
 
 
-def _inside(child: Path, parent: Path) -> bool:
-    try:
-        a, b = os.path.normcase(os.path.abspath(child)), os.path.normcase(os.path.abspath(parent))
-    except (OSError, ValueError):
-        return False
-    return a == b or a.startswith(b.rstrip("\\/") + os.sep)
+def _inside(child: Path, parent: Path, above=None, plain=None) -> bool:
+    """Whether *child* is *parent* or lies in it, as paths and by what both point to (``layout.inside``)."""
+    from .layout import inside
+
+    return inside(child, parent, above=above, plain=plain)
 
 
 def _on_host(path: Path, access: str) -> bool:
@@ -1334,7 +1333,7 @@ class Cards:
         such file", so there is a card only when the host has the path. *must_exist*: the call did not fail and
         only its own text says the path was refused, so there is a card only when the host has the path (for a
         refused write, the folder it goes into); a path the host lacks never asks for a folder above it."""
-        from .layout import LayoutError
+        from .layout import LayoutError, on_this_computer
         from .spec import folder_from_entry
 
         if not self.cards:
@@ -1343,6 +1342,12 @@ class Cards:
         if key is None:
             return 409, {"detail": "No desktop chat is attached to this sandbox."}
         access = "read_write" if access in ("read_write", "rw") else "read"
+        if not on_this_computer(path):
+            # Before anything is opened: a path named another way, or one that a link leads off this computer,
+            # can be a share of a computer the sandbox chose.
+            detail = "not a full path of this computer"
+            self._record({"event": "not carded", "origin": origin, "path": str(path), "detail": detail})
+            return 204, {"detail": detail}
         p = Path(path)
         if missing and not p.exists():
             return 204, {"detail": "not on the host"}
@@ -1393,17 +1398,23 @@ class Cards:
 
     def _covered(self, path: Path, access: str) -> Optional[str]:
         """Why *path* needs no folder card: the running sandbox already has it at *access* or more, or is
-        denied it on purpose. None when a card may ask for it."""
+        denied it on purpose. None when a card may ask for it. The path is compared with each grant as a path
+        and by what both point to, so a refusal that names a granted or a denied folder through a link or a
+        short name is that folder's."""
+        from .layout import identities
+
         grants = getattr(self._sup, "_grants", None)
+        plain: set = set()  # the sandbox writes below some grants: each is asked about before it is opened
+        above = identities(path, plain)
         for denied in (getattr(grants, "denied", None) or []):
-            if _inside(path, denied):
+            if _inside(path, denied, above, plain):
                 return "a path the sandbox is denied on purpose"
         for granted in (getattr(grants, "readwrite", None) or []):
-            if _inside(path, granted):
+            if _inside(path, granted, above, plain):
                 return "already granted read & write"
         if access != "read_write":
             for granted in (getattr(grants, "readonly", None) or []):
-                if _inside(path, granted):
+                if _inside(path, granted, above, plain):
                     return "already granted read"
         return None
 

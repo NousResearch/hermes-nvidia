@@ -1132,10 +1132,12 @@ def test_the_sandbox_reads_verdicts_but_requests_are_untrusted(harness, channel,
     (requests / "bad name!.json").write_text("{}", encoding="utf-8")
     (requests / "ok-1.json").write_text("not json", encoding="utf-8")
     (requests / "ok-2.json").write_bytes(b"{" + b" " * (V.MAX_REQUEST_BYTES + 10) + b"}")
-    (requests / "ok-3.json").write_text(json.dumps({"kind": "access", "paths": [{"path": "/x", "access": "rw"}],
+    named = str(tmp_path / "x")  # a full path of this computer: a path written any other way is dropped
+    (requests / "ok-3.json").write_text(json.dumps({"kind": "access", "paths": [{"path": named, "access": "rw"}],
                                                     "wait": 10 ** 9}), encoding="utf-8")
     got = V.read_requests(requests)
-    assert [r["id"] for r in got] == ["ok-3"] and got[0]["paths"] == [{"path": "/x", "access": "read", "missing": False}]
+    assert [r["id"] for r in got] == ["ok-3"]
+    assert got[0]["paths"] == [{"path": named, "access": "read", "missing": False}]
     assert got[0]["wait"] == V.MAX_WAIT and list(requests.iterdir()) == []
     verdicts = V.Verdicts(tmp_path / "v")
     verdicts.answer("r1", "card", ["net:example.com"])

@@ -8,12 +8,15 @@ infrastructure are carved out of the home grant explicitly; MXC applies the most
 from __future__ import annotations
 
 import logging
+import ntpath
 import os
+import re
 import shutil
 import stat
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 STATE_DIRNAME = "openshell"
 
@@ -60,6 +63,23 @@ WRITABLE_STORE_DIRS = ("cache", "runtime", "workspace")
 _EXTRA_NESTED_STORES = ("cache/op_cache.json",)  # 1Password secret values (agent/secret_sources/onepassword.py)
 
 log = logging.getLogger("openshell.layout")
+
+# A full path as Windows names a folder on one of this computer's drives: the drive letter, a colon, a separator.
+_DRIVE_PATH = re.compile(r"[A-Za-z]:[\\/]")
+# How every other full Windows path starts: a share, an extended-length or device path, a volume named by its id.
+_TWO_SEPARATORS = re.compile(r"[\\/]{2}")
+# The longest path that is taken for a path of this computer. A refusal the sandbox relays can name any text;
+# what looks at a path does one step for each folder in it, so a longer text is never looked at.
+PATH_CHARS = 4096
+# How many links one path is followed through before it counts as leading nowhere (``on_this_computer``).
+LINKS_FOLLOWED = 8
+# The bit of a Windows reparse tag that says the entry stands for another name: a symbolic link, a junction.
+_NAME_SURROGATE = 0x20000000
+# Where the OpenShell CLI keeps the gateways a user registered, each with the client key that signs in to it
+# (``<config home>/openshell/gateways/<name>/mtls``), below the user's home: ``~/.config`` is the config home
+# the launcher hands the CLI for a gateway the settings name (openshell_driver.py ``config_from_spec``), and the
+# roaming application data folder is the one the CLI takes on Windows when nothing names another.
+_OPENSHELL_CONFIG_HOMES = (".config", "AppData/Roaming")
 
 
 def sandbox_readonly_dirs() -> tuple[str, ...]:
@@ -405,30 +425,245 @@ def _dedupe(paths) -> list[Path]:
     return out
 
 
-def validate_folder(raw: str, layout: ProfileLayout) -> Path:
-    """Resolve a folder grant and refuse roots that would over-grant: drive roots, the user's home and
-    its ancestors, the hermes root (profile data is granted per profile), and credential folders."""
-    if not raw or not raw.strip():
-        raise LayoutError("Enter a folder path.")
-    path = Path(raw.strip()).expanduser()
-    if not path.is_absolute():
-        raise LayoutError(f"Use a full path: {raw.strip()}")
-    path = path.resolve()
-    if not path.is_dir():
-        raise LayoutError(f"Not a folder: {path}")
-    user_home = Path.home().resolve()
-    if path == Path(path.anchor) or path == user_home or path in user_home.parents:
-        raise LayoutError(f"A drive root or home folder can't be shared: {path}")
-    if _overlaps(path, layout.root):
-        raise LayoutError(f"Overlaps the Hermes data folder ({layout.root}).")
+def names_local_path(raw, *, windows: Optional[bool] = None) -> bool:
+    """Whether *raw* is written as a full path of this computer: from a drive letter on Windows (``C:\\...``),
+    from the root elsewhere. A Windows path that starts with two separators names its target another way: a
+    share of this or of another computer, an extended-length or device path, a volume by its id. Such a name
+    reaches the same folders as a drive path does, no comparison of paths reads it as one of them, and opening
+    it can connect to another computer. A text longer than ``PATH_CHARS`` is no path of this computer either.
+    Nothing is opened here."""
+    text = str(raw or "")
+    if len(text) > PATH_CHARS:
+        return False
+    if os.name == "nt" if windows is None else windows:
+        return bool(_DRIVE_PATH.match(text))
+    return text.startswith("/")
+
+
+def on_this_computer(path, plain: Optional[set] = None) -> bool:
+    """Whether *path* is written as a full path of this computer (``names_local_path``) and no link on the way
+    to it leads anywhere else. This is asked before a path the sandbox named is opened, resolved or compared by
+    what it points to: Windows follows a link from a local folder to a share, so opening a path below such a
+    link connects to the computer the link names, with the user's sign-in.
+
+    The path is walked from its drive, one folder at a time. Each entry is looked at with ``os.lstat``, which
+    does not follow the entry it is asked about, and a link's target is read with ``os.readlink``, which opens
+    the link and not what it points to. A target on a drive of this computer continues the walk from there, at
+    most ``LINKS_FOLLOWED`` times. A target of any other kind (a share, a device, a volume named by its id), a
+    target that cannot be read and an entry that cannot be looked at end the walk with no. An entry that is not
+    there ends it with yes: nothing below it is a link. An entry that Windows marks as stored elsewhere without
+    standing for another name (the placeholder of a cloud file) is the folder or file it is.
+
+    Elsewhere a link names a path of the same computer, and a path from the root needs no walk.
+    *plain*: a set the caller keeps over a row of questions. The folders found to be no links are noted in it
+    and are not looked at twice."""
+    if not names_local_path(path):
+        return False
+    if os.name != "nt":
+        return True
+    known = set() if plain is None else plain
+    text = ntpath.normpath(str(path))
+    for _ in range(LINKS_FOLLOWED + 1):
+        text = _to_first_link(text, known)
+        if not isinstance(text, str):
+            return text
+    return False
+
+
+def _to_first_link(text: str, known: set):
+    """One pass of ``on_this_computer`` over the drive path *text*: True when no entry on the way is a link,
+    False when one leads off this computer or cannot be read, else the path the first link makes of *text*."""
+    parts = [part for part in text[3:].split("\\") if part]
+    prefix = text[:3]
+    for index, part in enumerate(parts):
+        prefix = prefix + part if index == 0 else prefix + "\\" + part
+        key = prefix.casefold()
+        if key in known:
+            continue
+        try:
+            found = os.lstat(prefix)
+        except (FileNotFoundError, NotADirectoryError):
+            return True
+        except (OSError, ValueError):
+            return False
+        if not getattr(found, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            if stat.S_ISDIR(found.st_mode):
+                known.add(key)
+            continue
+        if not (stat.S_ISLNK(found.st_mode) or getattr(found, "st_reparse_tag", 0) & _NAME_SURROGATE):
+            continue
+        try:
+            target = _drive_target(prefix, os.readlink(prefix))
+        except (OSError, ValueError):
+            return False
+        if target is None:
+            return False
+        text = ntpath.normpath("\\".join([target, *parts[index + 1:]]))
+        return text if len(text) <= PATH_CHARS and _DRIVE_PATH.match(text) else False
+    return True
+
+
+def _drive_target(link: str, target: str) -> Optional[str]:
+    """Where the link at *link* leads when its target reads *target*, as a drive path; None when it leads
+    anywhere else. Windows stores a junction's target as an extended-length path: one of a drive is that drive
+    path, and one of a share, a volume id or a device is not. A relative target is taken from the link's folder."""
+    for extended in ("\\\\?\\", "\\??\\"):
+        if target.startswith(extended):
+            target = target[len(extended):]
+            return ntpath.normpath(target) if _DRIVE_PATH.match(target) else None
+    if _TWO_SEPARATORS.match(target):
+        return None
+    if not _DRIVE_PATH.match(target):
+        target = ntpath.join(ntpath.dirname(link), target)
+    target = ntpath.normpath(target)
+    return target if _DRIVE_PATH.match(target) else None
+
+
+def _identity(path) -> Optional[tuple]:
+    """What *path* points to, as the file system knows it: its device and its file id. None when it cannot be
+    read or the file system gives no id, so two such paths never count as one. It follows links: ask
+    ``on_this_computer`` first for a path the sandbox named or was able to put a link in."""
+    try:
+        found = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    return (found.st_dev, found.st_ino) if found.st_ino else None
+
+
+def identities(path, plain: Optional[set] = None) -> frozenset:
+    """``_identity`` of *path* and of every folder above it, taken along its real path (a link in it is followed
+    first, so the folders above are the ones that hold it). A path that does not exist gives the folders above
+    it that do. Empty for a path that is not written as a full path of this computer or that a link leads off
+    it (``on_this_computer``; *plain* is its): nothing is opened for such a path."""
+    if not on_this_computer(path, plain):
+        return frozenset()
+    try:
+        real = Path(os.path.realpath(path))
+    except (OSError, ValueError):
+        return frozenset()
+    return frozenset(found for found in (_identity(folder) for folder in (real, *real.parents)) if found is not None)
+
+
+def inside(child, parent, *, above: Optional[frozenset] = None, plain: Optional[set] = None) -> bool:
+    """Whether *child* is *parent* or lies in it. The two are compared as paths, the way this system compares
+    names, and by what they point to: *parent* is then one of the folders above *child* (*above*:
+    ``identities(child)``, for a caller that asks about many parents; *plain*: ``on_this_computer``'s). So a
+    child named through a link, a short name or a second mount of a folder lies in that folder."""
+    try:
+        a, b = os.path.normcase(os.path.abspath(child)), os.path.normcase(os.path.abspath(parent))
+    except (OSError, ValueError):
+        return False
+    if a == b or a.startswith(b.rstrip("\\/") + os.sep):
+        return True
+    if not on_this_computer(parent, plain):
+        return False
+    theirs = _identity(parent)
+    return theirs is not None and theirs in (identities(child, plain) if above is None else above)
+
+
+def gateway_client_dirs(layout: ProfileLayout, user_home: Path) -> list[Path]:
+    """The folders that hold the client keys of the OpenShell gateways a user registered: ``openshell`` in every
+    config home the OpenShell CLI or the launcher reads for one. Those are the two below the user's home
+    (``_OPENSHELL_CONFIG_HOMES``), the folder ``XDG_CONFIG_HOME`` names, and the one the profile's saved
+    settings name as ``openshell.config_home``. The launcher's own gateway keeps its registration below the
+    Hermes root."""
+    homes = [user_home.joinpath(*rel.split("/")) for rel in _OPENSHELL_CONFIG_HOMES]
+    named = [os.environ.get("XDG_CONFIG_HOME"), _saved_config_home(layout)]
+    homes += [Path(home).expanduser() for home in named if home and Path(home).expanduser().is_absolute()]
+    return _dedupe(home / "openshell" for home in homes)
+
+
+def _saved_config_home(layout: ProfileLayout) -> Optional[str]:
+    """``openshell.config_home`` of the profile's saved settings; None when they name none or cannot be read.
+    The file is parsed only when it holds the word."""
+    try:
+        text = layout.spec_path.read_text(encoding="utf-8")
+        if "config_home" not in text:
+            return None
+        import hermes_yaml
+
+        named = (hermes_yaml.safe_load(text).get("openshell") or {}).get("config_home")
+    except Exception:
+        return None
+    return named if isinstance(named, str) and named.strip() else None
+
+
+def _protected(layout: ProfileLayout, user_home: Path, plain: Optional[set] = None) -> list[tuple[Path, str]]:
+    """The folders no folder grant can be, lie in or contain, each with the refusal that names it: the Hermes
+    root, the launcher's folder for the profile, every profile folder (one that is a link out of the root is
+    taken where it points), the credential folders of the user's home, and the folders that hold the client
+    keys of the user's OpenShell gateways (``gateway_client_dirs``)."""
+    data = f"Overlaps the Hermes data folder ({layout.root})."
+    out = [(layout.root, data), (layout.state_dir, data)]
+    homes = [layout.home]
+    try:
+        homes += sorted((layout.root / "profiles").iterdir())
+    except OSError:
+        pass
+    for home in homes:
+        if not on_this_computer(home, plain) or not home.is_dir():
+            continue
+        real = Path(os.path.realpath(home))
+        if not _overlaps(real, layout.root):  # one inside the root is refused with the root
+            out.append((real, f"Overlaps the Hermes data folder ({real})."))
     try:
         from agent.file_safety import HOME_CREDENTIAL_DIRS
     except ImportError:
         HOME_CREDENTIAL_DIRS = _FALLBACK_HOME_CREDENTIAL_DIRS
-    for rel in (*HOME_CREDENTIAL_DIRS, *_WINDOWS_CREDENTIAL_DIRS):
-        cred = user_home.joinpath(*rel.split("/"))
-        if _overlaps(path, cred):
-            raise LayoutError(f"Overlaps a credential folder ({cred}).")
+    creds = [user_home.joinpath(*rel.split("/")) for rel in (*HOME_CREDENTIAL_DIRS, *_WINDOWS_CREDENTIAL_DIRS)]
+    for cred in (*creds, *gateway_client_dirs(layout, user_home)):
+        out.append((cred, f"Overlaps a credential folder ({cred})."))
+    return out
+
+
+def validate_folder(raw: str, layout: ProfileLayout) -> Path:
+    """Resolve a folder grant to the one path the launcher hands on, and refuse roots that would over-grant:
+    drive roots, the user's home and its ancestors, the Hermes root (profile data is granted per profile), the
+    launcher's folder, the profile folders and credential folders (``_protected``).
+
+    Every route that takes a folder comes through here: the settings page, a card, ``--folder`` and the saved
+    spec at each start. On Windows the folder is named from a drive letter, no link on the way to it leads off
+    this computer (``on_this_computer``, asked before anything is opened), and its final path is on a drive
+    (``names_local_path``). It is compared with each protected folder as a path and by what both point to
+    (``identities``), so another name of a protected folder is refused like the folder itself: a link to it, a
+    second mount of it, a name in another case on a file system that folds case."""
+    if not raw or not raw.strip():
+        raise LayoutError("Enter a folder path.")
+    text = raw.strip()
+    if len(text) > PATH_CHARS:
+        raise LayoutError("The path is too long.")
+    windows = os.name == "nt"
+    path = Path(text).expanduser()
+    if windows and _TWO_SEPARATORS.match(str(path)):
+        raise LayoutError(f"Use a path on a drive of this computer (C:\\...): {text}")
+    if not path.is_absolute():
+        raise LayoutError(f"Use a full path: {text}")
+    if len(str(path)) > PATH_CHARS:
+        raise LayoutError("The path is too long.")
+    plain: set = set()
+    if windows and not on_this_computer(path, plain):
+        raise LayoutError(f"This folder is not on a drive of this computer: {text}")
+    if not windows:
+        path = Path("/" + str(path).lstrip("/"))  # POSIX reads two leading slashes as one; Path keeps them apart
+    try:
+        path = path.resolve()
+        found = path.is_dir()
+    except (OSError, RuntimeError, ValueError):
+        found = False
+    if not found:
+        raise LayoutError(f"Not a folder: {path}")
+    if windows and not names_local_path(path):
+        raise LayoutError(f"This folder is not on a drive of this computer: {text}")
+    user_home = Path.home().resolve()
+    own, above = _identity(path), identities(path, plain)
+    if path == Path(path.anchor) or path == user_home or path in user_home.parents \
+            or (own is not None and own in identities(user_home, plain)):
+        raise LayoutError(f"A drive root or home folder can't be shared: {path}")
+    for folder, refusal in _protected(layout, user_home, plain):
+        theirs = _identity(folder) if on_this_computer(folder, plain) else None
+        if _overlaps(path, folder) or (theirs is not None and theirs in above) \
+                or (own is not None and own in identities(folder, plain)):
+            raise LayoutError(refusal)
     return path
 
 

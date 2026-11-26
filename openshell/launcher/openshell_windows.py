@@ -55,7 +55,7 @@ from ..loopback_env import DIRECT, LOOPBACK_ENV
 from .driver import DriverUnavailable, LaunchRequest, NotSupported, ProposalChanged, SandboxDriver
 from .gateway_service import TELEMETRY_OFF, gateway_log
 from .gateway_watch import GatewayWatch, registered as gateway_registered
-from .layout import legacy_secret_cache_paths
+from .layout import inside, legacy_secret_cache_paths
 from .openshell_driver import (HOST_GATEWAY, CredentialSinkMixin, OpenShellConfig, config_from_spec, ensure_managed,
                                gateway_endpoint, leftover_names, model_rules, network_from_policy, network_rules,
                                other_profiles, parse_event, passthrough, profile_labels, sandbox_name)
@@ -117,9 +117,15 @@ _ENDPOINT_RE = re.compile(r"([^\s,\[\]]+):(\d+)(?:\s*\[([^\]]*)\])?")
 _HITS_RE = re.compile(r"(\d+)(?:\s*\(first seen ([^,]+), last seen ([^)]+)\))?")
 
 
+# The extended-length and the device prefix before a drive path (``\\?\C:\x``, ``\\.\C:\x``).
+_DRIVE_PREFIX = re.compile(r"^[\\/]{2}[?.][\\/](?=[A-Za-z]:[\\/])")
+
+
 def native(path) -> str:
-    """A Windows path in native (backslash) form; anything else unchanged."""
-    text = str(path)
+    """A Windows path in native (backslash) form, an extended-length or device spelling of a drive path as the
+    drive path it names; anything else unchanged. The policy and every comparison of grants then hold one
+    spelling of a folder."""
+    text = _DRIVE_PREFIX.sub("", str(path))
     return str(PureWindowsPath(text)) if re.match(r"^[A-Za-z]:[\\/]", text) else text
 
 
@@ -140,7 +146,7 @@ def leaf_python(python: Path) -> Path:
 # -- filesystem policy: grants, deny list, carve-outs ------------------------------------------------
 
 def _key(path) -> str:
-    return os.path.normcase(os.path.abspath(str(path)))
+    return os.path.normcase(os.path.abspath(_DRIVE_PREFIX.sub("", str(path))))
 
 
 def _inside(child, parent) -> bool:
@@ -1164,7 +1170,9 @@ class OpenShellWindowsDriver(CredentialSinkMixin, SandboxDriver):
         state_dir = Path(request.config_dir)
         state_root = state_dir.parent
         root = state_root.parent
-        if not any(_inside(root, rw) for rw in request.grants.readwrite):
+        # The root is looked for among the grants by what the folders point to as well: a read & write grant that
+        # reaches it under another name hides these paths as the root's own grant does.
+        if not any(_inside(root, rw) or inside(root, rw) for rw in request.grants.readwrite):
             return []
         return [state_root, root / MARKER_NAME, *(state_dir / n for n in _HOST_ONLY_FILES)]
 

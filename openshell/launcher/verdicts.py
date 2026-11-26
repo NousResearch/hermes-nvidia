@@ -4,7 +4,8 @@
   program call that printed none, the hosts it named: ``strength: candidate``) as a small JSON file
   in ``<box>/requests`` (granted read & write to the sandbox). The launcher treats each one like any
   other relayed refusal: untrusted input, checked on the host by the same rules as the cards it raises
-  from relayed tool results and OpenShell proposals, size- and rate-limited, deleted once read.
+  from relayed tool results and OpenShell proposals, size- and rate-limited, deleted once read. A path
+  in it counts only when it is written as a full path of this computer (``layout.names_local_path``).
 * **Verdicts** (host -> sandbox): ``<state dir>/verdicts/verdicts.json``, written only by the launcher
   (atomically) into a folder granted read-only to the sandbox, so the hook can wait for an answer but
   never forge one. It answers each request (``requests[rid]``: which card targets it waits for, or why
@@ -214,10 +215,14 @@ def parse_request(rid: str, raw: bytes) -> Optional[dict]:
         if data.get("succeeded") is True:
             # A call that did not fail: the launcher asks only for a path the host has (``Cards.raise_access``).
             out["succeeded"] = True
+        from .layout import names_local_path
+
         paths = []
         for item in (data.get("paths") or [])[:4]:
             if not isinstance(item, dict) or not isinstance(item.get("path"), str) or len(item["path"]) > 1024:
                 continue
+            if not names_local_path(item["path"]):
+                continue  # the sandbox wrote this: a path named any other way is never opened, and gets no card
             paths.append({"path": item["path"], "access": "read_write" if item.get("access") == "read_write" else "read",
                           "missing": bool(item.get("missing"))})
         if not paths:

@@ -78,6 +78,7 @@ They never raise a card, and they show in Activity as refused.
 
 1. On the Sandbox page, choose **Add folder…**.
 2. Enter the folder's path and choose its access: **Read only** or **Read & write**.
+   On Windows, enter the path from its drive letter, for example `C:\Projects\app`.
 3. Confirm. While the sandbox is on, a folder change applies after a restart: the page shows
    "Changes apply after restart." with **Restart**.
 
@@ -86,7 +87,15 @@ The page refuses these folders:
 - a drive root;
 - your home folder, or a folder above it;
 - the Hermes data folder;
-- credential folders.
+- credential folders, among them the folder where the OpenShell CLI keeps the client keys of your
+  own gateways (`~/.config/openshell`; on Windows also `%APPDATA%\openshell`);
+- on Windows, a folder that is not on a drive of this computer: a network path such as
+  `\\server\share`, a mapped network drive, every other path that starts with `\\`, and a path
+  through a link that leads to one of these.
+
+A folder is refused under every name it has, also when the path leads to it through a link or a
+junction. `--folder`, a folder a card asks for and the folders saved in the profile's settings are
+checked the same way, the saved ones at every start.
 
 The agent can also ask for a folder during a chat. See [Approval cards](cards.md).
 
